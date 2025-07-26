@@ -81,4 +81,59 @@ docker build -f docker/Dockerfile -t carlot-streamlit .
 2. Run the container:
 ```bash
 docker run -d -p 8501:8501 --name carlot_app carlot-streamlit
+```
+
+## AWS Deployment
+The application is deployed on AWS using ECR and Elastic Beanstalk for high availability:
+
+### Prerequisites
+- AWS CLI configured with appropriate permissions
+- Docker installed
+- EB CLI installed (`pip install awsebcli`)
+
+### Deployment Steps
+
+1. **Update GitHub repository URL** in `deploy.sh`:
+```bash
+GITHUB_REPO="https://github.com/YOUR_USERNAME/CarLot-Manager.git"
+```
+
+2. **Run automated deployment**:
+```bash
+./deploy.sh
+```
+
+### What the deployment creates:
+- **ECR Repository**: Stores Docker images with lifecycle policies
+- **Elastic Beanstalk Environment**: 
+  - Minimum 2 EC2 instances across multiple AZs
+  - Load balancer for high availability
+  - Auto-scaling group (2-4 instances)
+  - Enhanced health monitoring
+- **IAM Roles**: Proper permissions for Beanstalk and ECR access
+
+### Manual Deployment Steps:
+
+1. **Deploy infrastructure**:
+```bash
+aws cloudformation deploy --template-file aws-cloudformation/template.yaml --stack-name carlot-infrastructure --capabilities CAPABILITY_IAM
+```
+
+2. **Build and push Docker image**:
+```bash
+# Build image
+docker build -f docker/Dockerfile -t carlot-manager .
+
+# Login to ECR
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com
+
+# Tag and push
+docker tag carlot-manager:latest ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/carlot-manager:latest
+docker push ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/carlot-manager:latest
+```
+
+3. **Deploy to Beanstalk**:
+```bash
+eb init carlot-manager --region us-east-1 --platform docker
+eb create carlot-prod --instance-types t3.small --min-instances 2 --max-instances 4
 ``` 

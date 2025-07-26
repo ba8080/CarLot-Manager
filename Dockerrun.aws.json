@@ -1,0 +1,12 @@
+{
+  "AWSEBDockerrunVersion": "1",
+  "Image": {
+    "Name": "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/carlot-manager:latest",
+    "Update": "true"
+  },
+  "Ports": [
+    {
+      "ContainerPort": "8501"
+    }
+  ]
+}

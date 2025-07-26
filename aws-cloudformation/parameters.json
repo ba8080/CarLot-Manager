@@ -1,0 +1,10 @@
+[
+  {
+    "ParameterKey": "ApplicationName",
+    "ParameterValue": "carlot-manager"
+  },
+  {
+    "ParameterKey": "EnvironmentName",
+    "ParameterValue": "carlot-prod"
+  }
+]
