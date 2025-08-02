@@ -135,5 +135,19 @@ Exit
 
 ---
 
+
+---
+
+## 🛡️ Error Handling
+
+Both the command-line and web applications are designed to handle invalid input and errors gracefully:
+
+- If you enter non-numeric values where numbers are expected (e.g., car ID, year, prices), the app will display an error message and prompt you to try again.
+- Attempting to sell or remove a car that does not exist will show a clear message.
+- The web app disables actions or shows info messages when no cars are available for a given operation.
+- All user actions are validated to prevent crashes and provide helpful feedback.
+
+---
+
 This app does not persist data between runs (in-memory only). For persistence, you could extend it with a CSV or SQLite backend.
 
