@@ -2,9 +2,15 @@ def add_car(inventory):
     try:
         car_id = int(input("ID: "))
         brand = input("Brand: ")
+        if not brand.isalpha():
+            print("Brand must contain only letters.")
+            return
         model = input("Model: ")
         year = int(input("Year: "))
         buy_price = float(input("Buy Price: "))
+        if buy_price < 0:
+            print("Buy Price cannot be negative.")
+            return
         inventory.append({
             "id": car_id,
             "brand": brand,
@@ -47,13 +53,25 @@ def edit_car(inventory):
     car_id = input("Enter ID to edit: ")
     for car in inventory:
         if str(car['id']) == car_id:
-            car['brand'] = input("New Brand: ")
+            brand = input("New Brand: ")
+            if not brand.isalpha():
+                print("Brand must contain only letters.")
+                return
+            car['brand'] = brand
             car['model'] = input("New Model: ")
-            car['year'] = int(input("New Year: "))
-            car['buy_price'] = float(input("New Buy Price: "))
-            if car['is_sold']:
-                car['sell_price'] = float(input("New Sell Price: "))
-            print("Car updated.")
+            try:
+                year = int(input("New Year: "))
+                buy_price = float(input("New Buy Price: "))
+                if buy_price < 0:
+                    print("Buy Price cannot be negative.")
+                    return
+                car['year'] = year
+                car['buy_price'] = buy_price
+                if car['is_sold']:
+                    car['sell_price'] = float(input("New Sell Price: "))
+                print("Car updated.")
+            except ValueError:
+                print("Invalid input.")
             return
     print("Car not found.")
 
