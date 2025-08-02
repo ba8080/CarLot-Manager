@@ -36,16 +36,21 @@ def add_car():
         buy_price = st.number_input("Buy Price", step=100)
         submitted = st.form_submit_button("Add")
         if submitted:
-            inventory.append({
-                "id": int(car_id),
-                "brand": brand,
-                "model": model,
-                "year": int(year),
-                "buy_price": float(buy_price),
-                "sell_price": None,
-                "is_sold": False
-            })
-            st.success("Car added successfully!")
+            if not brand.isalpha():
+                st.error("Brand must contain only letters.")
+            elif buy_price < 0:
+                st.error("Buy Price cannot be negative.")
+            else:
+                inventory.append({
+                    "id": int(car_id),
+                    "brand": brand,
+                    "model": model,
+                    "year": int(year),
+                    "buy_price": float(buy_price),
+                    "sell_price": None,
+                    "is_sold": False
+                })
+                st.success("Car added successfully!")
 
 def sell_car():
     """
