@@ -91,7 +91,16 @@ def show_stats():
     st.metric("Total Profit", f"{total_profit:.2f}")
     st.metric("Avg Profit", f"{avg_profit:.2f}")
 
+
+# Welcome screen
 st.title("🚗 Car Lot Manager")
+st.markdown("""
+<div style='text-align:center;'>
+<h2>Welcome to Car Lot Manager!</h2>
+<p>Manage your car inventory easily.</p>
+</div>
+""", unsafe_allow_html=True)
+
 menu = st.sidebar.selectbox("Navigate", ["Display", "Add Car", "Sell Car", "Sort Cars", "Stats"])
 
 

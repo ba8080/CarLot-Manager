@@ -1,6 +1,16 @@
+# Simple welcome screen
+def print_welcome():
+    print("""
+=====================================
+   Welcome to Car Lot Manager!
+   Manage your car inventory easily.
+=====================================
+    """)
+
 from functions import *
 
 def main():
+    print_welcome()
     inventory = []
     while True:
         print("\n--- Car Lot Manager ---")
