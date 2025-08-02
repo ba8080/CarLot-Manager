@@ -32,7 +32,7 @@ car-lot-manager/
 ## 🧠 Folder Structure for Python App
 
 Since the project is small, all files reside in the root directory. As it scales, you could adopt a structure like:
-
+```
 car-lot-manager/
 ├── src/
 │ ├── init.py
@@ -41,7 +41,7 @@ car-lot-manager/
 ├── tests/
 │ └── test_functions.py # (Optional) unit tests
 ├── README.md
-
+```
 
 ## 🧾 Function Documentation
 
