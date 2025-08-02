@@ -10,9 +10,12 @@ def print_welcome():
 from functions import *
 
 def main():
-    print_welcome()
+    first_login = True
     inventory = []
     while True:
+        if first_login:
+            print_welcome()
+            first_login = False
         print("\n--- Car Lot Manager ---")
         print("1. Add Car")
         print("2. Remove Car")

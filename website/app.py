@@ -1,7 +1,11 @@
 import streamlit as st
 
+
+# Session state for inventory and welcome screen
 if 'inventory' not in st.session_state:
     st.session_state.inventory = []
+if 'welcome_shown' not in st.session_state:
+    st.session_state.welcome_shown = False
 
 inventory = st.session_state.inventory
 
@@ -92,14 +96,19 @@ def show_stats():
     st.metric("Avg Profit", f"{avg_profit:.2f}")
 
 
-# Welcome screen
-st.title("🚗 Car Lot Manager")
-st.markdown("""
-<div style='text-align:center;'>
-<h2>Welcome to Car Lot Manager!</h2>
-<p>Manage your car inventory easily.</p>
-</div>
-""", unsafe_allow_html=True)
+
+# Show welcome screen only on first visit
+if not st.session_state.welcome_shown:
+    st.title("🚗 Car Lot Manager")
+    st.markdown("""
+    <div style='text-align:center;'>
+    <h2>Welcome to Car Lot Manager!</h2>
+    <p>Manage your car inventory easily.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    st.session_state.welcome_shown = True
+else:
+    st.title("🚗 Car Lot Manager")
 
 menu = st.sidebar.selectbox("Navigate", ["Display", "Add Car", "Sell Car", "Sort Cars", "Stats"])
 
