@@ -102,7 +102,38 @@ Exit
 
 ---
 
-## 📬 Notes
+
+## � How to Run the Project Locally
+
+### 1. Run the Command-Line Application
+
+1. Open a terminal and navigate to the project directory:
+   ```sh
+   cd path/to/car-lot-manager/app
+   ```
+2. Run the main Python script:
+   ```sh
+   python main.py
+   ```
+3. Follow the on-screen menu to add, edit, remove, sort, sell, and display cars.
+
+### 2. Run the Web Application (Streamlit)
+
+1. Make sure you have Streamlit installed. If not, install it with:
+   ```sh
+   pip install streamlit
+   ```
+2. Navigate to the `website` folder:
+   ```sh
+   cd path/to/car-lot-manager/website
+   ```
+3. Start the web app:
+   ```sh
+   streamlit run app.py
+   ```
+4. The app will open in your browser. Use the sidebar to navigate between features.
+
+---
 
 This app does not persist data between runs (in-memory only). For persistence, you could extend it with a CSV or SQLite backend.
 
