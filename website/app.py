@@ -75,7 +75,24 @@ def show_stats():
     st.metric("Avg Profit", f"{avg_profit:.2f}")
 
 st.title("🚗 Car Lot Manager")
-menu = st.sidebar.selectbox("Navigate", ["Display", "Add Car", "Sell Car", "Stats"])
+menu = st.sidebar.selectbox("Navigate", ["Display", "Add Car", "Sell Car", "Sort Cars", "Stats"])
+
+
+def sort_cars():
+    st.subheader("🔀 Sort Cars")
+    if not inventory:
+        st.info("No cars to sort.")
+        return
+    sort_options = ["id", "brand", "model", "year", "buy_price", "sell_price", "is_sold"]
+    key = st.selectbox("Sort by", sort_options)
+    reverse = st.checkbox("Descending order", value=False)
+    if st.button("Sort"):
+        try:
+            inventory.sort(key=lambda x: (x[key] if x[key] is not None else 0), reverse=reverse)
+            st.success(f"Sorted by {key} ({'descending' if reverse else 'ascending'})!")
+        except Exception as e:
+            st.error(f"Error sorting: {e}")
+    display_inventory()
 
 if menu == "Display":
     display_inventory()
@@ -83,5 +100,7 @@ elif menu == "Add Car":
     add_car()
 elif menu == "Sell Car":
     sell_car()
+elif menu == "Sort Cars":
+    sort_cars()
 elif menu == "Stats":
     show_stats()
