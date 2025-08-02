@@ -3,11 +3,11 @@
 A simple command-line based inventory management system for a car dealership. This Python application allows users to add, edit, sell, remove, sort, and display cars, as well as view sales statistics.
 
 ## 📁 Project Folder Structure
-
+```
 car-lot-manager/
 ├── main.py # Entry point of the application, handles the user interface loop
 ├── functions.py # Contains all core business logic and utility functions
-
+```
 
 ## 📌 Purpose and Role of Each File
 
