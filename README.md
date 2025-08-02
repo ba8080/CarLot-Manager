@@ -8,7 +8,6 @@ car-lot-manager/
 ├── main.py # Entry point of the application, handles the user interface loop
 ├── functions.py # Contains all core business logic and utility functions
 ```
-
 ## 📌 Purpose and Role of Each File
 
 ### `main.py`
@@ -27,14 +26,10 @@ car-lot-manager/
   - `display_cars()` - Displays all cars in the inventory.
   - `sort_cars()` - Sorts the inventory by a given field.
   - `sell_car()` - Marks a car as sold and records the sell price.
-  - `show_stats()` - Displays summary statistics like total cars, profits, averages, etc.
 
 ## 🧠 Folder Structure for Python App
 
-Since the project is small, all files reside in the root directory. As it scales, you could adopt a structure like:
-```
 car-lot-manager/
-├── src/
 │ ├── init.py
 │ ├── main.py
 │ └── functions.py
@@ -50,7 +45,6 @@ Each function in `functions.py` operates on the `inventory` list:
 ### `add_car(inventory)`
 Prompts user for car details and appends a dictionary to `inventory`.
 
-### `remove_car(inventory)`
 Removes a car by matching its ID. Informs if the car was not found.
 
 ### `edit_car(inventory)`
@@ -95,10 +89,27 @@ Exit
 
 ---
 
+
 ## ✅ Requirements
 
 - Python 3.6 or above
 - No third-party libraries required
+
+---
+
+## 🐳 How to Build and Run in a Local Docker Container
+
+1. Make sure you have Docker installed and running on your machine.
+2. Open a terminal and navigate to the project root directory (where the Dockerfile is located, e.g., `docker/` or project root).
+3. Build the Docker image (replace `car-lot-manager` with any name you like):
+   ```sh
+   docker build -t car-lot-manager -f docker/Dockerfile .
+   ```
+4. Run the Docker container:
+   ```sh
+   docker run -p 8501:8501 car-lot-manager
+   ```
+5. Open your browser and go to [http://localhost:8501](http://localhost:8501) to use the web application.
 
 ---
 
