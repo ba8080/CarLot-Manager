@@ -6,6 +6,9 @@ if 'inventory' not in st.session_state:
 inventory = st.session_state.inventory
 
 def display_inventory():
+    """
+    Display all cars in the inventory with their details and status.
+    """
     st.subheader("📋 Inventory")
     if not inventory:
         st.info("No cars in inventory.")
@@ -21,6 +24,9 @@ def display_inventory():
         st.markdown("---")
 
 def add_car():
+    """
+    Add a new car to the inventory using a Streamlit form.
+    """
     st.subheader("➕ Add Car")
     with st.form("add_car_form"):
         car_id = st.number_input("Car ID", step=1)
@@ -42,6 +48,9 @@ def add_car():
             st.success("Car added successfully!")
 
 def sell_car():
+    """
+    Mark a car as sold by selecting its ID and entering the sell price.
+    """
     st.subheader("💵 Sell Car")
     available_ids = [car['id'] for car in inventory if not car["is_sold"]]
     if not available_ids:
@@ -58,6 +67,9 @@ def sell_car():
                 return
 
 def show_stats():
+    """
+    Display statistics about the car inventory, including totals and profits.
+    """
     st.subheader("📊 Stats")
     if not inventory:
         st.info("No data.")
@@ -79,6 +91,9 @@ menu = st.sidebar.selectbox("Navigate", ["Display", "Add Car", "Sell Car", "Sort
 
 
 def sort_cars():
+    """
+    Sort the inventory by a selected field and order, then display the sorted list.
+    """
     st.subheader("🔀 Sort Cars")
     if not inventory:
         st.info("No cars to sort.")
