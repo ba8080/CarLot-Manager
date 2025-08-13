@@ -28,7 +28,7 @@ car-lot-manager/
   - `sell_car()` - Marks a car as sold and records the sell price.
 
 ## 🧠 Folder Structure for Python App
-
+```
 car-lot-manager/
 │ ├── init.py
 │ ├── main.py
