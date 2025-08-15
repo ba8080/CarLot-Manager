@@ -54,14 +54,14 @@ docker run -d -p 8501:8501 car-lot-manager
 aws ecr create-repository --repository-name car-lot-manager --region us-east-1
 
 # Get login token and authenticate Docker
-aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <YOUR-ACCOUNT-ID>.dkr.ecr.us-east-1.amazonaws.com
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 332678858794.dkr.ecr.us-east-1.amazonaws.com
 
 # Tag and push image to ECR
-docker tag car-lot-manager:latest <YOUR-ACCOUNT-ID>.dkr.ecr.us-east-1.amazonaws.com/car-lot-manager:latest
-docker push <YOUR-ACCOUNT-ID>.dkr.ecr.us-east-1.amazonaws.com/car-lot-manager:latest
+docker tag car-lot-manager:latest 332678858794.dkr.ecr.us-east-1.amazonaws.com/car-lot-manager:latest
+docker push 332678858794.dkr.ecr.us-east-1.amazonaws.com/car-lot-manager:latest
 ```
 
-**⚠️ Replace `<YOUR-ACCOUNT-ID>` with your actual AWS Account ID**
+**✅ Using AWS Account ID: 332678858794**
 
 ---
 
@@ -73,7 +73,7 @@ Edit `Dockerrun.aws.json` to use your ECR image:
 {
   "AWSEBDockerrunVersion": "1",
   "Image": {
-    "Name": "<YOUR-ACCOUNT-ID>.dkr.ecr.us-east-1.amazonaws.com/car-lot-manager:latest",
+    "Name": "332678858794.dkr.ecr.us-east-1.amazonaws.com/car-lot-manager:latest",
     "Update": "true"
   },
   "Ports": [

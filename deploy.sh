@@ -1,56 +1,108 @@
 #!/bin/bash
 
-# CarLot Manager Deployment Script
+# Car Lot Manager - Automated AWS Deployment Script
+# AWS Account: 332678858794, Region: us-east-1
 
-set -e
+set -e  # Exit on any error
 
-APP_NAME="carlot-manager"
-AWS_REGION="us-east-1"
-ECR_REPO_NAME="$APP_NAME"
-GITHUB_REPO="https://github.com/ba8080/CarLot-Manager.git"
+ACCOUNT_ID="332678858794"
+REGION="us-east-1"
+REPO_NAME="car-lot-manager"
+ECR_URI="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
 
-echo "Starting deployment process..."
+echo "🔧 AWS Credentials Setup"
+echo "Please enter your AWS credentials:"
 
-# Get AWS Account ID
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-ECR_URI="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_NAME:latest"
+read -p "AWS Access Key ID: " AWS_ACCESS_KEY_ID
+read -s -p "AWS Secret Access Key: " AWS_SECRET_ACCESS_KEY
+echo
+read -s -p "AWS Session Token: " AWS_SESSION_TOKEN
+echo
 
-# 1. Deploy CloudFormation infrastructure
-echo "Deploying CloudFormation infrastructure..."
-aws cloudformation deploy \
-  --template-file aws-cloudformation/template.yaml \
-  --stack-name $APP_NAME-infrastructure \
-  --parameter-overrides file://aws-cloudformation/parameters.json \
-  --capabilities CAPABILITY_IAM \
-  --region $AWS_REGION
+# Configure AWS CLI
+aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID"
+aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY"
+aws configure set aws_session_token "$AWS_SESSION_TOKEN"
+aws configure set region $REGION
+aws configure set output json
 
-# 2. Build Docker image with GitHub repo
-echo "Building Docker image..."
-docker build -f docker/Dockerfile --build-arg GITHUB_REPO=$GITHUB_REPO -t $APP_NAME .
+echo "✅ AWS credentials configured!"
+echo "🧪 Testing connection..."
+aws sts get-caller-identity
 
-# 3. Get ECR login token
-echo "Logging into ECR..."
-aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+if [ $? -ne 0 ]; then
+    echo "❌ AWS connection failed. Please check your credentials."
+    exit 1
+fi
 
-# 4. Tag and push image to ECR
-echo "Pushing image to ECR..."
-docker tag $APP_NAME:latest $ECR_URI
-docker push $ECR_URI
+echo "🚀 Starting automated deployment for Car Lot Manager..."
 
-# 5. Update Dockerrun.aws.json with correct ECR URI
-echo "Updating Dockerrun.aws.json..."
-sed -i.bak "s/ACCOUNT_ID/$ACCOUNT_ID/g" Dockerrun.aws.json
-sed -i.bak "s/REGION/$AWS_REGION/g" Dockerrun.aws.json
+# Step 3: Setup AWS ECR
+echo "📦 Setting up ECR repository..."
+aws ecr create-repository --repository-name $REPO_NAME --region $REGION || echo "Repository may already exist"
 
-# 6. Create application version and deploy to Beanstalk
-echo "Creating application version..."
-zip -r app-$(date +%Y%m%d-%H%M%S).zip Dockerrun.aws.json aws-beanstalk/
+# Authenticate Docker with ECR
+echo "🔐 Authenticating Docker with ECR..."
+aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ECR_URI
 
-# 7. Deploy to Elastic Beanstalk
-echo "Deploying to Elastic Beanstalk..."
-eb init $APP_NAME --region $AWS_REGION --platform docker
-eb create $APP_NAME-prod --instance-types t3.small --min-instances 2 --max-instances 4
+# Build and push Docker image
+echo "🐳 Building Docker image..."
+docker build -t $REPO_NAME -f docker/Dockerfile .
 
-echo "Deployment completed successfully!"
-echo "ECR Repository: $ECR_URI"
-echo "Application URL: $(aws cloudformation describe-stacks --stack-name $APP_NAME-infrastructure --query 'Stacks[0].Outputs[?OutputKey==`ApplicationURL`].OutputValue' --output text)"
+echo "📤 Pushing image to ECR..."
+docker tag $REPO_NAME:latest $ECR_URI/$REPO_NAME:latest
+docker push $ECR_URI/$REPO_NAME:latest
+
+# Step 4: Update Dockerrun.aws.json
+echo "📝 Updating Dockerrun.aws.json..."
+cat > Dockerrun.aws.json << EOF
+{
+  "AWSEBDockerrunVersion": "1",
+  "Image": {
+    "Name": "$ECR_URI/$REPO_NAME:latest",
+    "Update": "true"
+  },
+  "Ports": [
+    {
+      "ContainerPort": "8501"
+    }
+  ]
+}
+EOF
+
+# Step 5: Create deployment package
+echo "📁 Creating deployment package..."
+mkdir -p deploy
+cp Dockerrun.aws.json deploy/
+cd deploy
+
+# Step 6: Deploy to Elastic Beanstalk
+echo "🏗️ Initializing Elastic Beanstalk..."
+eb init clean-app --platform docker --region $REGION
+
+echo "🚀 Creating production environment..."
+eb create production-env \
+  --elb-type application \
+  --instance_type t2.micro \
+  --scale 2 \
+  --service-role LabRole \
+  --instance_profile LabInstanceProfile \
+  --keyname vockey
+
+# Step 7: Wait and get status
+echo "⏳ Waiting for deployment to complete..."
+eb status
+
+# Get and display the application URL
+echo "🌐 Getting application URL..."
+APP_URL=$(eb status | grep "CNAME:" | awk '{print $2}')
+
+echo "✅ Deployment completed successfully!"
+echo ""
+echo "🎯 APPLICATION URL FOR DEMO:"
+echo "http://$APP_URL"
+echo ""
+echo "Copy this URL for your class demonstration!"
+echo ""
+echo "📊 To check running instances:"
+echo "aws ec2 describe-instances --region $REGION --query \"Reservations[*].Instances[?State.Name=='running'].{InstanceId:InstanceId,AZ:Placement.AvailabilityZone,State:State.Name}\" --output table"
