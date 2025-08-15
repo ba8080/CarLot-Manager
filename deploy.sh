@@ -75,9 +75,20 @@ EOF
 
 # Step 5: Create deployment package
 echo "📁 Creating deployment package..."
+rm -rf deploy
 mkdir -p deploy
 cp Dockerrun.aws.json deploy/
 cd deploy
+
+# Clean up existing applications
+echo "🧹 Cleaning up existing deployments..."
+aws elasticbeanstalk describe-applications --application-names clean-app --region $REGION > /dev/null 2>&1 && {
+    echo "Found existing application, cleaning up..."
+    eb terminate production-env --force || true
+    sleep 10
+    aws elasticbeanstalk delete-application --application-name clean-app --region $REGION || true
+    sleep 5
+}
 
 # Step 6: Deploy to Elastic Beanstalk
 echo "🏗️ Initializing Elastic Beanstalk..."
