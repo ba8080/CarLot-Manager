@@ -82,20 +82,26 @@ cd deploy
 
 # Clean up existing applications
 echo "🧹 Cleaning up existing deployments..."
-aws elasticbeanstalk describe-applications --application-names clean-app --region $REGION > /dev/null 2>&1 && {
+if aws elasticbeanstalk describe-applications --application-names clean-app --region $REGION > /dev/null 2>&1; then
     echo "Found existing application, cleaning up..."
-    eb terminate production-env --force || true
-    sleep 10
+    # Terminate environment first
+    aws elasticbeanstalk terminate-environment --environment-name production-env --region $REGION || true
+    echo "Waiting for environment termination..."
+    sleep 30
+    # Delete application
     aws elasticbeanstalk delete-application --application-name clean-app --region $REGION || true
-    sleep 5
-}
+    sleep 10
+fi
 
 # Step 6: Deploy to Elastic Beanstalk
 echo "🏗️ Initializing Elastic Beanstalk..."
 eb init clean-app --platform docker --region $REGION
 
 echo "🚀 Creating production environment..."
-eb create production-env \
+# Use timestamp to make environment name unique
+TIMESTAMP=$(date +%s)
+ENV_NAME="production-env-$TIMESTAMP"
+eb create $ENV_NAME \
   --elb-type application \
   --instance_type t2.micro \
   --scale 2 \
@@ -110,6 +116,9 @@ eb status
 # Get and display the application URL
 echo "🌐 Getting application URL..."
 APP_URL=$(eb status | grep "CNAME:" | awk '{print $2}')
+if [ -z "$APP_URL" ]; then
+    APP_URL="Environment may still be starting - check eb status"
+fi
 
 echo "✅ Deployment completed successfully!"
 echo ""
