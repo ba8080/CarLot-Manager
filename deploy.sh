@@ -5,10 +5,8 @@
 
 set -e  # Exit on any error
 
-ACCOUNT_ID="332678858794"
 REGION="us-east-1"
 REPO_NAME="car-lot-manager"
-ECR_URI="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
 
 echo "🔧 AWS Credentials Setup"
 echo "Please enter your AWS credentials:"
@@ -35,7 +33,12 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+# Get actual account ID
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+ECR_URI="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
+
 echo "🚀 Starting automated deployment for Car Lot Manager..."
+echo "📋 Using Account ID: $ACCOUNT_ID"
 
 # Step 3: Setup AWS ECR
 echo "📦 Setting up ECR repository..."
