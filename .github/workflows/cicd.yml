@@ -76,14 +76,17 @@ jobs:
       - name: Generate Inventory
         working-directory: ./ansible
         run: |
-          # Get instance IPs from terraform
+          # Install jq for JSON parsing
+          sudo apt-get install -y jq
+          
+          # Get instance IPs from terraform using jq
           cd ../terraform
-          IP1=$(terraform output -raw instance_ips | grep -oP '\d+\.\d+\.\d+\.\d+' | sed -n '1p')
-          IP2=$(terraform output -raw instance_ips | grep -oP '\d+\.\d+\.\d+\.\d+' | sed -n '2p')
-          IP3=$(terraform output -raw instance_ips | grep -oP '\d+\.\d+\.\d+\.\d+' | sed -n '3p')
-          echo "Extracted IPs: $IP1, $IP2, $IP3"
+          INSTANCE_IPS=$(terraform output -json instance_ips 2>/dev/null | jq -r '.value[]' | tr '\n' ' ')
           cd ../ansible
-          python3 generate_inventory.py "$IP1" "$IP2" "$IP3"
+          
+          # Pass IPs to Python script
+          python3 generate_inventory.py $INSTANCE_IPS
+          
           echo "Generated inventory.ini:"
           cat inventory.ini
 
