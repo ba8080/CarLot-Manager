@@ -64,10 +64,29 @@ jobs:
           ALB_DNS=$(terraform output -raw alb_dns_name | head -n 1)
           MASTER_IP=$(terraform output -raw master_private_ip | head -n 1)
           
-          # Extract instance IPs one by one
-          IP1=$(terraform output -raw instance_ips | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | sed -n '1p')
-          IP2=$(terraform output -raw instance_ips | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | sed -n '2p')
-          IP3=$(terraform output -raw instance_ips | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | sed -n '3p')
+          # Extract instance IPs using jq for better reliability
+          IP1=$(terraform output -json instance_ips | jq -r '.[0]')
+          IP2=$(terraform output -json instance_ips | jq -r '.[1]')
+          IP3=$(terraform output -json instance_ips | jq -r '.[2]')
+          
+          # Validate outputs
+          if [ -z "$IP1" ] || [ "$IP1" == "null" ]; then
+            echo "Error: IP1 is empty"
+            exit 1
+          fi
+          if [ -z "$IP2" ] || [ "$IP2" == "null" ]; then
+            echo "Error: IP2 is empty"
+            exit 1
+          fi
+          if [ -z "$IP3" ] || [ "$IP3" == "null" ]; then
+            echo "Error: IP3 is empty"
+            exit 1
+          fi
+          
+          echo "Extracted IPs:"
+          echo "IP1 (Master): $IP1"
+          echo "IP2 (Worker1): $IP2"
+          echo "IP3 (Worker2): $IP3"
           
           echo "alb_dns=$ALB_DNS" >> $GITHUB_OUTPUT
           echo "master_ip=$MASTER_IP" >> $GITHUB_OUTPUT
@@ -91,6 +110,36 @@ jobs:
           
           echo "Generated inventory.ini:"
           cat inventory.ini
+          
+          echo ""
+          echo "Validating inventory format..."
+          if ! grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' inventory.ini; then
+            echo "ERROR: No valid IP addresses found in inventory file!"
+            exit 1
+          fi
+          echo "Inventory validation passed!"
+
+      - name: Wait for Instances to be Ready
+        run: |
+          echo "Waiting for SSH to be available on all instances..."
+          
+          for ip in "${{ steps.tf-outputs.outputs.ip1 }}" "${{ steps.tf-outputs.outputs.ip2 }}" "${{ steps.tf-outputs.outputs.ip3 }}"; do
+            echo "Testing SSH connection to $ip..."
+            for i in {1..30}; do
+              if ssh -i /tmp/generated_key.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@$ip exit 2>/dev/null; then
+                echo "✓ SSH ready on $ip"
+                break
+              fi
+              if [ $i -eq 30 ]; then
+                echo "✗ SSH timeout on $ip after 5 minutes"
+                exit 1
+              fi
+              echo "  Attempt $i/30 - waiting 10 seconds..."
+              sleep 10
+            done
+          done
+          
+          echo "All instances are ready!"
 
       - name: Run Ansible Playbook
         working-directory: ./ansible

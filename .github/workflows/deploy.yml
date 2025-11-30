@@ -98,11 +98,36 @@ jobs:
       working-directory: ./terraform
       run: |
         terraform init
-        echo "MASTER_IP=$(terraform output -json instance_ips | jq -r '.[0]')" >> $GITHUB_ENV
-        echo "MASTER_PRIVATE_IP=$(terraform output -raw master_private_ip)" >> $GITHUB_ENV
-        echo "WORKER1_IP=$(terraform output -json instance_ips | jq -r '.[1]')" >> $GITHUB_ENV
-        echo "WORKER2_IP=$(terraform output -json instance_ips | jq -r '.[2]')" >> $GITHUB_ENV
-        echo "ALB_DNS=$(terraform output -raw alb_dns_name)" >> $GITHUB_ENV
+        MASTER_IP=$(terraform output -json instance_ips | jq -r '.[0]')
+        MASTER_PRIVATE_IP=$(terraform output -raw master_private_ip)
+        WORKER1_IP=$(terraform output -json instance_ips | jq -r '.[1]')
+        WORKER2_IP=$(terraform output -json instance_ips | jq -r '.[2]')
+        ALB_DNS=$(terraform output -raw alb_dns_name)
+        
+        # Validate outputs
+        if [ -z "$MASTER_IP" ] || [ "$MASTER_IP" == "null" ]; then
+          echo "Error: MASTER_IP is empty"
+          exit 1
+        fi
+        if [ -z "$WORKER1_IP" ] || [ "$WORKER1_IP" == "null" ]; then
+          echo "Error: WORKER1_IP is empty"
+          exit 1
+        fi
+        if [ -z "$WORKER2_IP" ] || [ "$WORKER2_IP" == "null" ]; then
+          echo "Error: WORKER2_IP is empty"
+          exit 1
+        fi
+        
+        echo "MASTER_IP=$MASTER_IP" >> $GITHUB_ENV
+        echo "MASTER_PRIVATE_IP=$MASTER_PRIVATE_IP" >> $GITHUB_ENV
+        echo "WORKER1_IP=$WORKER1_IP" >> $GITHUB_ENV
+        echo "WORKER2_IP=$WORKER2_IP" >> $GITHUB_ENV
+        echo "ALB_DNS=$ALB_DNS" >> $GITHUB_ENV
+        
+        echo "Extracted IPs:"
+        echo "Master: $MASTER_IP"
+        echo "Worker1: $WORKER1_IP"
+        echo "Worker2: $WORKER2_IP"
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -110,14 +135,27 @@ jobs:
 
     - name: Create Ansible Inventory
       run: |
-        cat > ansible/inventory.ini << EOF
+        mkdir -p ansible
+        cat > ansible/inventory.ini << 'EOF'
         [master]
         ${{ env.MASTER_IP }} ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no'
 
         [worker]
         ${{ env.WORKER1_IP }} ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no'
         ${{ env.WORKER2_IP }} ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+
+        [all:vars]
+        ansible_python_interpreter=/usr/bin/python3
         EOF
+        
+        echo "Generated inventory.ini:"
+        cat ansible/inventory.ini
+        
+        # Validate inventory file
+        if ! grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' ansible/inventory.ini; then
+          echo "Error: No valid IP addresses found in inventory file"
+          exit 1
+        fi
 
     - name: Extract SSH Key
       working-directory: ./terraform
