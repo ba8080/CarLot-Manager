@@ -58,10 +58,9 @@ Click the link to access the Car Lot Manager application.
 
 ### Pipeline Stages
 1. **Test**: Runs unit tests for the Python app.
-2. **Build & Push**: Builds Docker image and pushes to Docker Hub.
-3. **Terraform Apply**: Provisions AWS infrastructure.
-4. **Ansible Configure**: Configures K8s cluster and NFS.
-5. **Helm Deploy**: Deploys the application to K8s.
+2. **Terraform Apply**: Provisions AWS infrastructure.
+3. **Ansible Configure**: Configures K8s cluster and NFS.
+4. **Helm Deploy**: Deploys the application to K8s.
 
 ### Troubleshooting
 - **Pipeline Fails at Terraform**: Check AWS credentials and permissions.

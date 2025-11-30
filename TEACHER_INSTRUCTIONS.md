@@ -33,7 +33,7 @@ Add the following secrets (using your own AWS and Docker Hub accounts):
 *   The workflow will take approximately **10-15 minutes**.
 *   It will:
     *   Test the code.
-    *   Build/Push Docker image.
+    *   Test the code.
     *   Provision EC2 + ALB (Terraform).
     *   Configure K8s + NFS (Ansible).
     *   Deploy App (Helm).
