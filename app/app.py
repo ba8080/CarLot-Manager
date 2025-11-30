@@ -8,7 +8,7 @@ DATA_FILE = os.environ.get('DATA_FILE', 'data/inventory.json')
 # Initial dummy data
 INITIAL_DATA = [
     {"id": 1, "make": "Toyota", "model": "Camry", "year": 2024, "price": 24000},
-    {"id": 2, "make": "Honda", "model": "Civic", "year": 2025, "price": 22000},
+    {"id": 2, "make": "Honda", "model": "Civic", "year": 2005, "price": 22000},
     {"id": 3, "make": "Ford", "model": "Mustang", "year": 2021, "price": 35000}
 ]
 
