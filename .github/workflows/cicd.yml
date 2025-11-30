@@ -81,8 +81,11 @@ jobs:
           IP1=$(terraform output -raw instance_ips | grep -oP '\d+\.\d+\.\d+\.\d+' | sed -n '1p')
           IP2=$(terraform output -raw instance_ips | grep -oP '\d+\.\d+\.\d+\.\d+' | sed -n '2p')
           IP3=$(terraform output -raw instance_ips | grep -oP '\d+\.\d+\.\d+\.\d+' | sed -n '3p')
+          echo "Extracted IPs: $IP1, $IP2, $IP3"
           cd ../ansible
           python3 generate_inventory.py "$IP1" "$IP2" "$IP3"
+          echo "Generated inventory.ini:"
+          cat inventory.ini
 
       - name: Run Ansible Playbook
         working-directory: ./ansible
