@@ -268,7 +268,7 @@ jobs:
           echo "http://${{ steps.infra.outputs.alb_dns }}" > deployment_url.txt
           
       - name: Upload Deployment URL
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: deployment-url
           path: deployment_url.txt
