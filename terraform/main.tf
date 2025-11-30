@@ -12,11 +12,20 @@ terraform {
       source  = "hashicorp/local"
       version = "~> 2.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 }
 
 provider "aws" {
   region = "us-east-1"
+}
+
+# Generate random suffix for resource names
+resource "random_id" "suffix" {
+  byte_length = 4
 }
 
 
@@ -27,7 +36,7 @@ resource "tls_private_key" "pk" {
 }
 
 resource "aws_key_pair" "kp" {
-  key_name   = "carlot-key"       # Create a new key pair on AWS
+  key_name   = "carlot-key-${random_id.suffix.hex}"
   public_key = tls_private_key.pk.public_key_openssh
 }
 
@@ -192,7 +201,7 @@ resource "aws_instance" "k8s_node" {
 
 # Load Balancer
 resource "aws_lb" "main" {
-  name               = "carlot-alb"
+  name               = "carlot-alb-${random_id.suffix.hex}"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
@@ -204,8 +213,8 @@ resource "aws_lb" "main" {
 }
 
 resource "aws_lb_target_group" "app" {
-  name     = "carlot-tg"
-  port     = 30080 # NodePort
+  name     = "carlot-tg-${random_id.suffix.hex}"
+  port     = 30080
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id
 }
