@@ -18,10 +18,22 @@ def get_terraform_outputs():
             check=True
         )
         
-        # Filter out GitHub Actions command lines (lines starting with [command])
-        output_lines = result.stdout.split('\n')
-        json_lines = [line for line in output_lines if not line.startswith('[command]')]
-        json_output = '\n'.join(json_lines)
+        # Filter out GitHub Actions command lines and find JSON content
+        output = result.stdout
+        
+        # Remove lines starting with [command]
+        lines = output.split('\n')
+        filtered_lines = [line for line in lines if not line.startswith('[command]')]
+        filtered_output = '\n'.join(filtered_lines)
+        
+        # Find the first { and last } to extract only the JSON object
+        first_brace = filtered_output.find('{')
+        last_brace = filtered_output.rfind('}')
+        
+        if first_brace == -1 or last_brace == -1:
+            raise ValueError("No JSON object found in terraform output")
+        
+        json_output = filtered_output[first_brace:last_brace+1]
         
         return json.loads(json_output)
     except subprocess.CalledProcessError as e:
@@ -29,9 +41,9 @@ def get_terraform_outputs():
         print(f"stdout: {e.stdout}")
         print(f"stderr: {e.stderr}")
         sys.exit(1)
-    except json.JSONDecodeError as e:
+    except (json.JSONDecodeError, ValueError) as e:
         print(f"Error parsing JSON: {e}")
-        print(f"Output was: {json_output}")
+        print(f"Filtered output was: {json_output if 'json_output' in locals() else filtered_output}")
         sys.exit(1)
 
 def generate_inventory(outputs):
