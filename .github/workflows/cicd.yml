@@ -60,10 +60,12 @@ jobs:
       - name: Get Terraform Outputs
         id: tf-outputs
         working-directory: ./terraform
+        env:
+          TF_LOG: ""
         run: |
-          echo "alb_dns=$(terraform output -raw alb_dns_name 2>/dev/null)" >> $GITHUB_OUTPUT
-          echo "master_ip=$(terraform output -raw master_private_ip 2>/dev/null)" >> $GITHUB_OUTPUT
-          terraform output -raw ssh_private_key > /tmp/generated_key.pem 2>/dev/null
+          echo "alb_dns=$(terraform output -raw alb_dns_name)" >> $GITHUB_OUTPUT
+          echo "master_ip=$(terraform output -raw master_private_ip)" >> $GITHUB_OUTPUT
+          terraform output -raw ssh_private_key > /tmp/generated_key.pem
           chmod 400 /tmp/generated_key.pem
 
       - name: Setup Ansible
