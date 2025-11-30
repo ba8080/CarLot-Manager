@@ -16,10 +16,9 @@ terraform {
 }
 
 provider "aws" {
-  region                   = "us-east-1"
-  shared_credentials_files = ["../aws_credentials"]
-  profile                  = "default"
+  region = "us-east-1"
 }
+
 
 # Generate SSH Key
 resource "tls_private_key" "pk" {
