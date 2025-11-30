@@ -48,6 +48,11 @@ jobs:
         working-directory: ./terraform
         run: terraform init
 
+      - name: Terraform Destroy (cleanup old resources)
+        working-directory: ./terraform
+        run: terraform destroy -auto-approve
+        continue-on-error: true
+
       - name: Terraform Apply
         working-directory: ./terraform
         run: terraform apply -auto-approve
