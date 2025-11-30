@@ -1,0 +1,12 @@
+{
+  "AWSEBDockerrunVersion": "1",
+  "Image": {
+    "Name": "718053299287.dkr.ecr.us-east-1.amazonaws.com/car-lot-manager:latest",
+    "Update": "true"
+  },
+  "Ports": [
+    {
+      "ContainerPort": "8501"
+    }
+  ]
+}

@@ -1,0 +1,127 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  DOCKER_IMAGE: azexkush/car-lot-manager
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install dependencies
+        run: |
+          pip install -r app/requirements.txt
+          pip install pytest
+      - name: Run tests
+        run: |
+          # Simple test to check if app imports correctly
+          python -c "from app.app import app; print('App imported successfully')"
+
+  build-push:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ${{ env.DOCKER_IMAGE }}:latest,${{ env.DOCKER_IMAGE }}:${{ github.sha }}
+
+  deploy:
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Terraform Apply
+        working-directory: ./terraform
+        run: terraform apply -auto-approve
+        
+      - name: Get Terraform Outputs
+        id: tf-outputs
+        working-directory: ./terraform
+        run: |
+          echo "alb_dns=$(terraform output -raw alb_dns_name)" >> $GITHUB_OUTPUT
+          echo "master_ip=$(terraform output -raw master_private_ip)" >> $GITHUB_OUTPUT
+          terraform output -raw ssh_private_key > ../generated_key.pem
+          chmod 400 ../generated_key.pem
+
+      - name: Setup Ansible
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible
+
+      - name: Generate Inventory
+        working-directory: ./ansible
+        run: python3 generate_inventory.py
+
+      - name: Run Ansible Playbook
+        working-directory: ./ansible
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+        run: ansible-playbook -i inventory.ini playbook.yml
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+
+      - name: Deploy with Helm
+        env:
+          KUBECONFIG: ./kubeconfig
+        run: |
+          # We need to get kubeconfig from the master node
+          # Since we are outside the VPC, we might need to use the public IP if we allowed SSH
+          # But for security, usually we use a bastion or SSM. 
+          # For this project, we assume we can SSH to the master node via its public IP (which we have in inventory).
+          
+          # Extract Master Public IP from inventory (hacky but works for this scope)
+          MASTER_PUBLIC_IP=$(grep -A 1 "\[master\]" ansible/inventory.ini | tail -n 1 | awk '{print $1}')
+          
+          # Fetch kubeconfig
+          scp -o StrictHostKeyChecking=no -i generated_key.pem ubuntu@$MASTER_PUBLIC_IP:/home/ubuntu/.kube/config ./kubeconfig
+          
+          # Update kubeconfig server to use public IP (since we are external)
+          sed -i "s/server: https:\/\/.*:6443/server: https:\/\/$MASTER_PUBLIC_IP:6443/g" ./kubeconfig
+          
+          # Deploy
+          helm upgrade --install car-lot ./helm/car-lot \
+            --set image.repository=${{ env.DOCKER_IMAGE }} \
+            --set image.tag=${{ github.sha }} \
+            --set nfs.server=${{ steps.tf-outputs.outputs.master_ip }}
+
+      - name: Final Output
+        run: |
+          echo "========================================================"
+          echo "Application deployed successfully!"
+          echo "Access it at: http://${{ steps.tf-outputs.outputs.alb_dns }}/"
+          echo "========================================================"

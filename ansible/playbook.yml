@@ -1,0 +1,96 @@
+---
+- name: Setup Kubernetes Cluster and NFS
+  hosts: all
+  become: yes
+  vars:
+    nfs_path: "/srv/nfs/carlot"
+  
+  tasks:
+    - name: Disable swap
+      shell: |
+        swapoff -a
+        sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+
+    - name: Install Docker and dependencies
+      apt:
+        name:
+          - docker.io
+          - apt-transport-https
+          - curl
+          - nfs-common
+        state: present
+        update_cache: yes
+
+    - name: Configure containerd
+      shell: |
+        mkdir -p /etc/containerd
+        containerd config default | tee /etc/containerd/config.toml
+        sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
+        systemctl restart containerd
+
+    - name: Pull Docker image
+      shell: docker pull azexkush/car-lot-manager:latest
+      register: docker_pull
+      ignore_errors: yes
+
+    - name: Verify Docker image
+      shell: docker images | grep car-lot-manager
+      ignore_errors: yes
+
+    - name: Install Kubernetes tools
+      shell: |
+        curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /' | tee /etc/apt/sources.list.d/kubernetes.list
+        apt-get update
+        apt-get install -y kubelet kubeadm kubectl
+        apt-mark hold kubelet kubeadm kubectl
+
+    - name: Setup NFS Server (Master only)
+      when: "'master' in group_names"
+      block:
+        - name: Install NFS Kernel Server
+          apt:
+            name: nfs-kernel-server
+            state: present
+
+        - name: Create NFS directory
+          file:
+            path: "{{ nfs_path }}"
+            state: directory
+            mode: '0777'
+
+        - name: Configure exports
+          lineinfile:
+            path: /etc/exports
+            line: "{{ nfs_path }} *(rw,sync,no_subtree_check,no_root_squash)"
+
+        - name: Restart NFS
+          service:
+            name: nfs-kernel-server
+            state: restarted
+
+    - name: Initialize Kubernetes Master
+      when: "'master' in group_names"
+      shell: |
+        kubeadm init --pod-network-cidr=10.244.0.0/16 --ignore-preflight-errors=NumCPU
+        mkdir -p /home/ubuntu/.kube
+        cp -i /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
+        chown ubuntu:ubuntu /home/ubuntu/.kube/config
+        kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+      register: kubeadm_init
+      ignore_errors: yes
+
+    - name: Get Join Command
+      when: "'master' in group_names"
+      shell: kubeadm token create --print-join-command
+      register: join_command_raw
+
+    - name: Set Join Command Fact
+      when: "'master' in group_names"
+      set_fact:
+        join_command: "{{ join_command_raw.stdout }}"
+
+    - name: Join Workers
+      when: "'worker' in group_names"
+      shell: "{{ hostvars[groups['master'][0]]['join_command'] }}"
+      ignore_errors: yes
