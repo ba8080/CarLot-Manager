@@ -2,14 +2,26 @@
 - name: Setup Kubernetes Cluster and NFS
   hosts: all
   become: yes
+  gather_facts: yes
   vars:
     nfs_path: "/srv/nfs/carlot"
   
   tasks:
+    - name: Wait for cloud-init to finish
+      command: cloud-init status --wait
+      changed_when: false
+      ignore_errors: yes
+
     - name: Disable swap
       shell: |
         swapoff -a
         sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+      ignore_errors: yes
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
 
     - name: Install Docker and dependencies
       apt:
@@ -18,8 +30,16 @@
           - apt-transport-https
           - curl
           - nfs-common
+          - gnupg
         state: present
-        update_cache: yes
+      retries: 3
+      delay: 10
+
+    - name: Start and enable Docker
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
 
     - name: Configure containerd
       shell: |
@@ -27,15 +47,21 @@
         containerd config default | tee /etc/containerd/config.toml
         sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
         systemctl restart containerd
+      retries: 3
+      delay: 5
 
     - name: Pull Docker image
       shell: docker pull azexkush/car-lot-manager:latest
       register: docker_pull
+      retries: 3
+      delay: 10
       ignore_errors: yes
 
-    - name: Verify Docker image
-      shell: docker images | grep car-lot-manager
-      ignore_errors: yes
+    - name: Create directory for Kubernetes GPG key
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
 
     - name: Install Kubernetes tools
       shell: |
@@ -44,6 +70,8 @@
         apt-get update
         apt-get install -y kubelet kubeadm kubectl
         apt-mark hold kubelet kubeadm kubectl
+      retries: 3
+      delay: 10
 
     - name: Setup NFS Server (Master only)
       when: "'master' in group_names"
@@ -63,34 +91,66 @@
           lineinfile:
             path: /etc/exports
             line: "{{ nfs_path }} *(rw,sync,no_subtree_check,no_root_squash)"
+            create: yes
+
+        - name: Export NFS shares
+          command: exportfs -ra
 
         - name: Restart NFS
-          service:
+          systemd:
             name: nfs-kernel-server
             state: restarted
+            enabled: yes
 
     - name: Initialize Kubernetes Master
       when: "'master' in group_names"
       shell: |
+        kubeadm reset -f
         kubeadm init --pod-network-cidr=10.244.0.0/16 --ignore-preflight-errors=NumCPU
         mkdir -p /home/ubuntu/.kube
-        cp -i /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
+        cp -f /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
         chown ubuntu:ubuntu /home/ubuntu/.kube/config
-        kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
       register: kubeadm_init
-      ignore_errors: yes
+      retries: 2
+      delay: 10
+
+    - name: Install Flannel CNI (Master only)
+      when: "'master' in group_names"
+      become_user: ubuntu
+      shell: |
+        kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+      environment:
+        KUBECONFIG: /home/ubuntu/.kube/config
+      retries: 3
+      delay: 10
+
+    - name: Wait for Kubernetes API to be ready (Master only)
+      when: "'master' in group_names"
+      become_user: ubuntu
+      command: kubectl get nodes
+      environment:
+        KUBECONFIG: /home/ubuntu/.kube/config
+      register: kubectl_get_nodes
+      until: kubectl_get_nodes.rc == 0
+      retries: 10
+      delay: 10
 
     - name: Get Join Command
       when: "'master' in group_names"
       shell: kubeadm token create --print-join-command
       register: join_command_raw
+      retries: 3
+      delay: 5
 
     - name: Set Join Command Fact
       when: "'master' in group_names"
       set_fact:
         join_command: "{{ join_command_raw.stdout }}"
 
-    - name: Join Workers
+    - name: Join Workers to Cluster
       when: "'worker' in group_names"
-      shell: "{{ hostvars[groups['master'][0]]['join_command'] }}"
-      ignore_errors: yes
+      shell: |
+        kubeadm reset -f
+        {{ hostvars[groups['master'][0]]['join_command'] }} --ignore-preflight-errors=NumCPU
+      retries: 2
+      delay: 10

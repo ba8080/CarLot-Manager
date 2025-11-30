@@ -1,0 +1,274 @@
+name: Simple Complete Deployment
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  DOCKER_IMAGE: azexkush/car-lot-manager
+
+jobs:
+  deploy-all:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Terraform Destroy Old Resources
+        working-directory: ./terraform
+        run: terraform destroy -auto-approve
+        continue-on-error: true
+
+      - name: Terraform Apply
+        working-directory: ./terraform
+        run: terraform apply -auto-approve
+
+      - name: Get Infrastructure Details
+        id: infra
+        working-directory: ./terraform
+        run: |
+          # Get all outputs
+          ALB_DNS=$(terraform output -raw alb_dns_name)
+          MASTER_PRIVATE_IP=$(terraform output -raw master_private_ip)
+          
+          # Get instance IPs as JSON array
+          INSTANCE_IPS=$(terraform output -json instance_ips)
+          
+          # Extract individual IPs
+          MASTER_IP=$(echo $INSTANCE_IPS | jq -r '.[0]')
+          WORKER1_IP=$(echo $INSTANCE_IPS | jq -r '.[1]')
+          WORKER2_IP=$(echo $INSTANCE_IPS | jq -r '.[2]')
+          
+          # Validate IPs
+          for ip in "$MASTER_IP" "$WORKER1_IP" "$WORKER2_IP"; do
+            if [ -z "$ip" ] || [ "$ip" == "null" ]; then
+              echo "ERROR: Failed to extract IP: $ip"
+              exit 1
+            fi
+          done
+          
+          # Output for next steps
+          echo "alb_dns=$ALB_DNS" >> $GITHUB_OUTPUT
+          echo "master_ip=$MASTER_IP" >> $GITHUB_OUTPUT
+          echo "master_private_ip=$MASTER_PRIVATE_IP" >> $GITHUB_OUTPUT
+          echo "worker1_ip=$WORKER1_IP" >> $GITHUB_OUTPUT
+          echo "worker2_ip=$WORKER2_IP" >> $GITHUB_OUTPUT
+          
+          echo "=========================================="
+          echo "Infrastructure Created:"
+          echo "Master Node: $MASTER_IP (Private: $MASTER_PRIVATE_IP)"
+          echo "Worker 1: $WORKER1_IP"
+          echo "Worker 2: $WORKER2_IP"
+          echo "Load Balancer: $ALB_DNS"
+          echo "=========================================="
+          
+          # Extract SSH key
+          terraform output -raw ssh_private_key > /tmp/ssh_key.pem
+          chmod 400 /tmp/ssh_key.pem
+
+      - name: Wait for Instances to Boot
+        run: |
+          echo "Waiting 90 seconds for instances to fully boot..."
+          sleep 90
+
+      - name: Test SSH Connectivity
+        run: |
+          echo "Testing SSH connectivity to all nodes..."
+          
+          for ip in "${{ steps.infra.outputs.master_ip }}" "${{ steps.infra.outputs.worker1_ip }}" "${{ steps.infra.outputs.worker2_ip }}"; do
+            echo "Testing $ip..."
+            max_attempts=30
+            attempt=1
+            
+            while [ $attempt -le $max_attempts ]; do
+              if ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@$ip "echo OK" 2>/dev/null; then
+                echo "✓ SSH ready on $ip"
+                break
+              fi
+              
+              if [ $attempt -eq $max_attempts ]; then
+                echo "✗ Failed to connect to $ip after $max_attempts attempts"
+                exit 1
+              fi
+              
+              echo "  Attempt $attempt/$max_attempts failed, retrying in 10 seconds..."
+              sleep 10
+              attempt=$((attempt + 1))
+            done
+          done
+          
+          echo "All nodes are SSH accessible!"
+
+      - name: Create Ansible Inventory
+        run: |
+          mkdir -p ansible
+          
+          cat > ansible/inventory.ini << EOF
+          [master]
+          ${{ steps.infra.outputs.master_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/ssh_key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+          
+          [worker]
+          ${{ steps.infra.outputs.worker1_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/ssh_key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+          ${{ steps.infra.outputs.worker2_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/ssh_key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+          
+          [all:vars]
+          ansible_python_interpreter=/usr/bin/python3
+          EOF
+          
+          echo "=========================================="
+          echo "Generated Ansible Inventory:"
+          cat ansible/inventory.ini
+          echo "=========================================="
+          
+          # Validate inventory
+          if ! grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' ansible/inventory.ini; then
+            echo "ERROR: Invalid inventory file!"
+            exit 1
+          fi
+
+      - name: Install Ansible
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible
+
+      - name: Run Ansible Playbook
+        run: |
+          cd ansible
+          ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory.ini playbook.yml -vv
+
+      - name: Wait for Kubernetes Cluster
+        run: |
+          echo "Waiting for Kubernetes cluster to stabilize..."
+          sleep 60
+
+      - name: Fetch Kubeconfig
+        run: |
+          echo "Fetching kubeconfig from master node..."
+          
+          # Wait for kubeconfig file to exist
+          max_attempts=30
+          attempt=1
+          while [ $attempt -le $max_attempts ]; do
+            if ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "test -f /home/ubuntu/.kube/config" 2>/dev/null; then
+              echo "Kubeconfig file exists!"
+              break
+            fi
+            
+            if [ $attempt -eq $max_attempts ]; then
+              echo "ERROR: Kubeconfig file not found after $max_attempts attempts"
+              exit 1
+            fi
+            
+            echo "Attempt $attempt/$max_attempts - waiting 10 seconds..."
+            sleep 10
+            attempt=$((attempt + 1))
+          done
+          
+          # Fetch the kubeconfig
+          scp -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }}:/home/ubuntu/.kube/config /tmp/kubeconfig
+          
+          # Update server address to use public IP
+          sed -i "s|server: https://.*:6443|server: https://${{ steps.infra.outputs.master_ip }}:6443|g" /tmp/kubeconfig
+          
+          echo "Kubeconfig fetched and updated!"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: v3.12.0
+
+      - name: Wait for Nodes to be Ready
+        run: |
+          export KUBECONFIG=/tmp/kubeconfig
+          
+          echo "Waiting for all nodes to be Ready..."
+          max_attempts=30
+          attempt=1
+          
+          while [ $attempt -le $max_attempts ]; do
+            ready_nodes=$(kubectl get nodes --no-headers 2>/dev/null | grep -c " Ready" || echo "0")
+            echo "Attempt $attempt/$max_attempts: $ready_nodes/3 nodes ready"
+            
+            if [ "$ready_nodes" -eq "3" ]; then
+              echo "All nodes are ready!"
+              kubectl get nodes
+              break
+            fi
+            
+            if [ $attempt -eq $max_attempts ]; then
+              echo "ERROR: Not all nodes ready after waiting"
+              kubectl get nodes
+              exit 1
+            fi
+            
+            sleep 10
+            attempt=$((attempt + 1))
+          done
+
+      - name: Deploy Application with Helm
+        run: |
+          export KUBECONFIG=/tmp/kubeconfig
+          
+          echo "Deploying Car Lot Manager application..."
+          
+          helm upgrade --install car-lot-manager ./helm/car-lot \
+            --set image.repository=${{ env.DOCKER_IMAGE }} \
+            --set image.tag=latest \
+            --set nfs.server=${{ steps.infra.outputs.master_private_ip }} \
+            --wait \
+            --timeout 10m
+          
+          echo "Application deployed!"
+          
+          kubectl get pods
+          kubectl get svc
+
+      - name: Deployment Summary
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "🎉 DEPLOYMENT SUCCESSFUL! 🎉"
+          echo "=========================================="
+          echo ""
+          echo "🌐 Access your application at:"
+          echo ""
+          echo "    http://${{ steps.infra.outputs.alb_dns }}"
+          echo ""
+          echo "=========================================="
+          echo ""
+          echo "Infrastructure Details:"
+          echo "  - Master Node: ${{ steps.infra.outputs.master_ip }}"
+          echo "  - Worker 1: ${{ steps.infra.outputs.worker1_ip }}"
+          echo "  - Worker 2: ${{ steps.infra.outputs.worker2_ip }}"
+          echo "  - Load Balancer: ${{ steps.infra.outputs.alb_dns }}"
+          echo ""
+          echo "=========================================="
+          echo ""
+          
+          # Save ALB URL to file
+          echo "http://${{ steps.infra.outputs.alb_dns }}" > deployment_url.txt
+          
+      - name: Upload Deployment URL
+        uses: actions/upload-artifact@v3
+        with:
+          name: deployment-url
+          path: deployment_url.txt
