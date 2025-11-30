@@ -17,7 +17,13 @@ def get_terraform_outputs():
             text=True,
             check=True
         )
-        return json.loads(result.stdout)
+        
+        # Filter out GitHub Actions command lines (lines starting with [command])
+        output_lines = result.stdout.split('\n')
+        json_lines = [line for line in output_lines if not line.startswith('[command]')]
+        json_output = '\n'.join(json_lines)
+        
+        return json.loads(json_output)
     except subprocess.CalledProcessError as e:
         print(f"Error running terraform output: {e}")
         print(f"stdout: {e.stdout}")
@@ -25,7 +31,7 @@ def get_terraform_outputs():
         sys.exit(1)
     except json.JSONDecodeError as e:
         print(f"Error parsing JSON: {e}")
-        print(f"Output was: {result.stdout}")
+        print(f"Output was: {json_output}")
         sys.exit(1)
 
 def generate_inventory(outputs):
