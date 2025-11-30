@@ -17,7 +17,7 @@ Add the following secrets (using your own AWS and Docker Hub accounts):
 |-------------|---------------|
 | `AWS_ACCESS_KEY_ID` | `AKIAIOSFODNN7EXAMPLE` |
 | `AWS_SECRET_ACCESS_KEY` | `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` |
-| `AWS_REGION` | `us-east-1` |
+
 | `DOCKERHUB_USERNAME` | `azexkush` (Must have push access to `azexkush/car-lot-manager`) |
 | `DOCKERHUB_TOKEN` | `dckr_pat_...` (Access Token) |
 

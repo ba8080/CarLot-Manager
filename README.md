@@ -27,7 +27,7 @@ To deploy this project, you must configure the following **GitHub Secrets** in t
 |-------------|-------------|---------------|
 | `AWS_ACCESS_KEY_ID` | AWS Access Key | `AKIA...` |
 | `AWS_SECRET_ACCESS_KEY` | AWS Secret Key | `wJalr...` |
-| `AWS_REGION` | AWS Region | `us-east-1` |
+
 | `DOCKERHUB_USERNAME` | Docker Hub Username | `azexkush` |
 | `DOCKERHUB_TOKEN` | Docker Hub Access Token | `dckr_pat_...` |
 
