@@ -75,7 +75,14 @@ jobs:
 
       - name: Generate Inventory
         working-directory: ./ansible
-        run: python3 generate_inventory.py
+        run: |
+          # Get instance IPs from terraform
+          cd ../terraform
+          IP1=$(terraform output -raw instance_ips | grep -oP '\d+\.\d+\.\d+\.\d+' | sed -n '1p')
+          IP2=$(terraform output -raw instance_ips | grep -oP '\d+\.\d+\.\d+\.\d+' | sed -n '2p')
+          IP3=$(terraform output -raw instance_ips | grep -oP '\d+\.\d+\.\d+\.\d+' | sed -n '3p')
+          cd ../ansible
+          python3 generate_inventory.py "$IP1" "$IP2" "$IP3"
 
       - name: Run Ansible Playbook
         working-directory: ./ansible
