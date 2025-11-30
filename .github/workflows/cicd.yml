@@ -58,8 +58,8 @@ jobs:
         run: |
           echo "alb_dns=$(terraform output -raw alb_dns_name)" >> $GITHUB_OUTPUT
           echo "master_ip=$(terraform output -raw master_private_ip)" >> $GITHUB_OUTPUT
-          terraform output -raw ssh_private_key > ../generated_key.pem
-          chmod 400 ../generated_key.pem
+          terraform output -raw ssh_private_key > $GITHUB_WORKSPACE/generated_key.pem
+          chmod 400 $GITHUB_WORKSPACE/generated_key.pem
 
       - name: Setup Ansible
         run: |
@@ -92,7 +92,7 @@ jobs:
           MASTER_PUBLIC_IP=$(grep -A 1 "\[master\]" ansible/inventory.ini | tail -n 1 | awk '{print $1}')
           
           # Fetch kubeconfig
-          scp -o StrictHostKeyChecking=no -i generated_key.pem ubuntu@$MASTER_PUBLIC_IP:/home/ubuntu/.kube/config ./kubeconfig
+          scp -o StrictHostKeyChecking=no -i $GITHUB_WORKSPACE/generated_key.pem ubuntu@$MASTER_PUBLIC_IP:/home/ubuntu/.kube/config ./kubeconfig
           
           # Update kubeconfig server to use public IP (since we are external)
           sed -i "s/server: https:\/\/.*:6443/server: https:\/\/$MASTER_PUBLIC_IP:6443/g" ./kubeconfig
