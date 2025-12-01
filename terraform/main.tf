@@ -41,8 +41,8 @@ resource "aws_key_pair" "kp" {
 }
 
 resource "local_file" "ssh_key" {
-  filename = "${path.module}/../generated_key.pem"
-  content  = tls_private_key.pk.private_key_pem
+  filename        = "${path.module}/../generated_key.pem"
+  content         = tls_private_key.pk.private_key_pem
   file_permission = "0400"
 }
 
@@ -140,6 +140,22 @@ resource "aws_security_group" "k8s_nodes" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # NodePort for application
+  ingress {
+    from_port   = 30080
+    to_port     = 30080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # NFS
+  ingress {
+    from_port = 2049
+    to_port   = 2049
+    protocol  = "tcp"
+    self      = true
+  }
+
   # Allow all internal traffic for K8s communication
   ingress {
     from_port = 0
@@ -188,7 +204,7 @@ resource "aws_security_group" "alb" {
 resource "aws_instance" "k8s_node" {
   count                  = 3
   ami                    = "ami-0c7217cdde317cfec" # Ubuntu 22.04 LTS us-east-1
-  instance_type          = "t2.medium" # K8s needs 2 vCPU
+  instance_type          = "t2.medium"             # K8s needs 2 vCPU
   subnet_id              = count.index % 2 == 0 ? aws_subnet.public_1.id : aws_subnet.public_2.id
   vpc_security_group_ids = [aws_security_group.k8s_nodes.id]
   key_name               = aws_key_pair.kp.key_name # Use generated key
@@ -217,6 +233,23 @@ resource "aws_lb_target_group" "app" {
   port     = 30080
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id
+
+  health_check {
+    enabled             = true
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    timeout             = 5
+    interval            = 30
+    path                = "/health"
+    protocol            = "HTTP"
+    matcher             = "200"
+  }
+
+  deregistration_delay = 30
+
+  tags = {
+    Name = "carlot-target-group"
+  }
 }
 
 resource "aws_lb_listener" "front_end" {
