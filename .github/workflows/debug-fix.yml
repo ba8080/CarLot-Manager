@@ -1,0 +1,153 @@
+name: Debug and Fix Deployment
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  debug-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Get Infrastructure Details
+        id: infra
+        working-directory: ./terraform
+        run: |
+          MASTER_IP=$(terraform output -json instance_ips | jq -r '.[0]')
+          ALB_DNS=$(terraform output -raw alb_dns_name)
+          MASTER_PRIVATE_IP=$(terraform output -raw master_private_ip)
+          
+          echo "master_ip=$MASTER_IP" >> $GITHUB_OUTPUT
+          echo "alb_dns=$ALB_DNS" >> $GITHUB_OUTPUT
+          echo "master_private_ip=$MASTER_PRIVATE_IP" >> $GITHUB_OUTPUT
+          
+          terraform output -raw ssh_private_key > /tmp/ssh_key.pem
+          chmod 400 /tmp/ssh_key.pem
+
+      - name: Debug Current Status
+        run: |
+          echo "=== DEBUGGING DEPLOYMENT ==="
+          echo "Master IP: ${{ steps.infra.outputs.master_ip }}"
+          echo "ALB DNS: ${{ steps.infra.outputs.alb_dns }}"
+          echo ""
+          
+          echo "1. Checking cluster status..."
+          ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "kubectl get nodes"
+          echo ""
+          
+          echo "2. Checking pods..."
+          ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "kubectl get pods -o wide"
+          echo ""
+          
+          echo "3. Checking services..."
+          ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "kubectl get svc"
+          echo ""
+          
+          echo "4. Checking PVC..."
+          ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "kubectl get pvc"
+
+      - name: Fix Deployment
+        run: |
+          echo "=== FIXING DEPLOYMENT ==="
+          
+          # Install Helm on master if not present
+          ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "
+            if ! command -v helm &> /dev/null; then
+              curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+            fi
+          "
+          
+          # Copy Helm chart
+          scp -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no -r ./helm ubuntu@${{ steps.infra.outputs.master_ip }}:/tmp/
+          
+          # Redeploy application
+          ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "
+            cd /tmp
+            
+            # Remove existing deployment
+            helm uninstall car-lot-manager --ignore-not-found
+            kubectl delete pvc --all --ignore-not-found
+            
+            # Wait a bit
+            sleep 15
+            
+            # Redeploy
+            helm install car-lot-manager ./helm/car-lot \
+              --set image.repository=azexkush/car-lot-manager \
+              --set image.tag=latest \
+              --set nfs.server=${{ steps.infra.outputs.master_private_ip }} \
+              --wait \
+              --timeout 10m
+          "
+
+      - name: Verify Fix
+        run: |
+          echo "=== VERIFYING FIX ==="
+          
+          # Wait for pods
+          sleep 30
+          
+          echo "Pod status:"
+          ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "kubectl get pods -o wide"
+          echo ""
+          
+          echo "Service status:"
+          ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "kubectl get svc"
+          echo ""
+          
+          # Test NodePort directly
+          echo "Testing NodePort on master:"
+          ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "curl -s http://localhost:30080/health || echo 'NodePort failed'"
+          echo ""
+          
+          # Test Load Balancer
+          echo "Testing Load Balancer:"
+          sleep 60  # Wait for ALB to register targets
+          
+          for i in {1..5}; do
+            echo "Attempt $i/5:"
+            if curl -s --connect-timeout 10 "http://${{ steps.infra.outputs.alb_dns }}/health" | grep -q "healthy"; then
+              echo "✅ Application is working!"
+              break
+            else
+              echo "❌ Still not working, waiting..."
+              sleep 30
+            fi
+          done
+
+      - name: Final Status
+        run: |
+          echo ""
+          echo "==========================================="
+          echo "🔧 DEBUG AND FIX COMPLETED"
+          echo "==========================================="
+          echo ""
+          echo "🌐 Try accessing your application at:"
+          echo ""
+          echo "    http://${{ steps.infra.outputs.alb_dns }}"
+          echo ""
+          echo "If still getting 504 errors, wait 2-3 minutes"
+          echo "for the Load Balancer to fully register targets."
+          echo ""
+          echo "==========================================="
