@@ -186,10 +186,8 @@ jobs:
           # Fetch the kubeconfig
           scp -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }}:/home/ubuntu/.kube/config /tmp/kubeconfig
           
-          # Update server address to use public IP
-          sed -i "s|server: https://.*:6443|server: https://${{ steps.infra.outputs.master_ip }}:6443|g" /tmp/kubeconfig
-          
-          echo "Kubeconfig fetched and updated!"
+          # Keep the original server address (private IP) to avoid TLS certificate issues
+          echo "Kubeconfig fetched successfully!"
 
       - name: Install Helm
         uses: azure/setup-helm@v3
@@ -198,25 +196,24 @@ jobs:
 
       - name: Wait for Nodes to be Ready
         run: |
-          export KUBECONFIG=/tmp/kubeconfig
-          
           echo "Waiting for all nodes to be Ready..."
           max_attempts=30
           attempt=1
           
           while [ $attempt -le $max_attempts ]; do
-            ready_nodes=$(kubectl get nodes --no-headers 2>/dev/null | grep -c " Ready" || echo "0")
+            # Run kubectl directly on master node via SSH
+            ready_nodes=$(ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready'" || echo "0")
             echo "Attempt $attempt/$max_attempts: $ready_nodes/3 nodes ready"
             
-            if [ "$ready_nodes" -eq "3" ]; then
+            if [ "$ready_nodes" = "3" ]; then
               echo "All nodes are ready!"
-              kubectl get nodes
+              ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "kubectl get nodes"
               break
             fi
             
             if [ $attempt -eq $max_attempts ]; then
               echo "ERROR: Not all nodes ready after waiting"
-              kubectl get nodes
+              ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "kubectl get nodes" || echo "kubectl failed"
               exit 1
             fi
             
@@ -224,32 +221,108 @@ jobs:
             attempt=$((attempt + 1))
           done
 
+      - name: Install Helm on Master Node
+        run: |
+          echo "Installing Helm on master node..."
+          ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "
+            curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          "
+
       - name: Deploy Application with Helm
         run: |
-          export KUBECONFIG=/tmp/kubeconfig
+          echo "Copying Helm chart to master node..."
+          scp -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no -r ./helm ubuntu@${{ steps.infra.outputs.master_ip }}:/tmp/
           
           echo "Deploying Car Lot Manager application..."
-          
-          helm upgrade --install car-lot-manager ./helm/car-lot \
-            --set image.repository=${{ env.DOCKER_IMAGE }} \
-            --set image.tag=latest \
-            --set nfs.server=${{ steps.infra.outputs.master_private_ip }} \
-            --wait \
-            --timeout 10m
+          ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "
+            cd /tmp
+            helm upgrade --install car-lot-manager ./helm/car-lot \
+              --set image.repository=${{ env.DOCKER_IMAGE }} \
+              --set image.tag=latest \
+              --set nfs.server=${{ steps.infra.outputs.master_private_ip }} \
+              --wait \
+              --timeout 10m
+          "
           
           echo "Application deployed!"
           
-          kubectl get pods
-          kubectl get svc
+          ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "kubectl get pods"
+          ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "kubectl get svc"
 
-      - name: Deployment Summary
+      - name: Verify Deployment
+        run: |
+          echo "Verifying deployment status..."
+          
+          # Check pod status
+          ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "
+            echo 'Pod Status:'
+            kubectl get pods -o wide
+            echo ''
+            echo 'Service Status:'
+            kubectl get svc
+            echo ''
+            echo 'PVC Status:'
+            kubectl get pvc
+          "
+          
+          # Wait for pods to be ready
+          echo "Waiting for pods to be ready..."
+          max_attempts=20
+          attempt=1
+          
+          while [ $attempt -le $max_attempts ]; do
+            ready_pods=$(ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "kubectl get pods --no-headers 2>/dev/null | grep -c ' Running'" || echo "0")
+            echo "Attempt $attempt/$max_attempts: $ready_pods pods running"
+            
+            if [ "$ready_pods" -ge "2" ]; then
+              echo "Pods are ready!"
+              break
+            fi
+            
+            if [ $attempt -eq $max_attempts ]; then
+              echo "WARNING: Not all pods ready, but continuing..."
+            fi
+            
+            sleep 15
+            attempt=$((attempt + 1))
+          done
+
+      - name: Test Application Accessibility
+        run: |
+          echo "Testing application accessibility..."
+          APP_URL="http://${{ steps.infra.outputs.alb_dns }}"
+          
+          echo "Waiting for Load Balancer to register targets..."
+          sleep 60
+          
+          max_attempts=10
+          attempt=1
+          
+          while [ $attempt -le $max_attempts ]; do
+            echo "Testing attempt $attempt/$max_attempts..."
+            
+            if curl -s --connect-timeout 10 "$APP_URL/health" | grep -q "healthy"; then
+              echo "✅ Application is accessible and healthy!"
+              break
+            fi
+            
+            if [ $attempt -eq $max_attempts ]; then
+              echo "⚠️  Application may not be fully ready yet, but deployment completed."
+              echo "   Please wait a few more minutes and try accessing the URL."
+            fi
+            
+            sleep 30
+            attempt=$((attempt + 1))
+          done
+
+      - name: Final Deployment Summary
         run: |
           echo ""
           echo "=========================================="
-          echo "🎉 DEPLOYMENT SUCCESSFUL! 🎉"
+          echo "🎉 DEPLOYMENT COMPLETED! 🎉"
           echo "=========================================="
           echo ""
-          echo "🌐 Access your application at:"
+          echo "🌐 Access your Car Lot Manager at:"
           echo ""
           echo "    http://${{ steps.infra.outputs.alb_dns }}"
           echo ""
@@ -260,6 +333,17 @@ jobs:
           echo "  - Worker 1: ${{ steps.infra.outputs.worker1_ip }}"
           echo "  - Worker 2: ${{ steps.infra.outputs.worker2_ip }}"
           echo "  - Load Balancer: ${{ steps.infra.outputs.alb_dns }}"
+          echo ""
+          echo "Application Features:"
+          echo "  - Add new cars to inventory"
+          echo "  - View all cars in inventory"
+          echo "  - Data persisted on NFS storage"
+          echo "  - Health check: /health"
+          echo "  - API endpoint: /api/inventory"
+          echo ""
+          echo "Note: If the application is not immediately accessible,"
+          echo "please wait 2-3 minutes for the Load Balancer to fully"
+          echo "register all targets."
           echo ""
           echo "=========================================="
           echo ""

@@ -123,7 +123,10 @@
       when: "'master' in group_names"
       shell: |
         kubeadm reset -f
-        kubeadm init --pod-network-cidr=10.244.0.0/16 --ignore-preflight-errors=NumCPU,FileContent--proc-sys-net-bridge-bridge-nf-call-iptables
+        # Initialize with both private and public IP in cert SANs
+        kubeadm init --pod-network-cidr=10.244.0.0/16 \
+          --apiserver-cert-extra-sans={{ ansible_default_ipv4.address }},{{ ansible_ssh_host }} \
+          --ignore-preflight-errors=NumCPU,FileContent--proc-sys-net-bridge-bridge-nf-call-iptables
         mkdir -p /home/ubuntu/.kube
         cp -f /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
         chown ubuntu:ubuntu /home/ubuntu/.kube/config
@@ -167,16 +170,31 @@
       retries: 3
       delay: 5
 
-    - name: Share join command to all hosts
+    - name: Save join command to file (Master only)
       when: "'master' in group_names"
-      set_fact:
-        cluster_join_command: "{{ join_command_raw.stdout }}"
+      copy:
+        content: "{{ join_command_raw.stdout }}"
+        dest: /tmp/join_command.txt
+        mode: '0644'
+
+    - name: Fetch join command from master
+      when: "'master' in group_names"
+      fetch:
+        src: /tmp/join_command.txt
+        dest: /tmp/join_command.txt
+        flat: yes
       run_once: true
+
+    - name: Read join command
+      when: "'worker' in group_names"
+      set_fact:
+        cluster_join_command: "{{ lookup('file', '/tmp/join_command.txt') }}"
+      delegate_to: localhost
 
     - name: Join Workers to Cluster
       when: "'worker' in group_names"
       shell: |
         kubeadm reset -f
         {{ cluster_join_command }} --ignore-preflight-errors=NumCPU
-      retries: 2
+      retries: 3
       delay: 10
