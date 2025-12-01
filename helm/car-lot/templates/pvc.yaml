@@ -21,3 +21,5 @@ spec:
   resources:
     requests:
       storage: {{ .Values.nfs.storage }}
+  storageClassName: ""
+  volumeName: {{ include "car-lot.fullname" . }}-pv

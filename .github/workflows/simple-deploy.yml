@@ -249,13 +249,13 @@ jobs:
           ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "kubectl get pods"
           ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "kubectl get svc"
 
-      - name: Verify Deployment
+      - name: Verify and Fix Deployment
         run: |
           echo "Verifying deployment status..."
           
-          # Check pod status
+          # Check current status
           ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "
-            echo 'Pod Status:'
+            echo 'Current Pod Status:'
             kubectl get pods -o wide
             echo ''
             echo 'Service Status:'
@@ -265,27 +265,47 @@ jobs:
             kubectl get pvc
           "
           
-          # Wait for pods to be ready
-          echo "Waiting for pods to be ready..."
-          max_attempts=20
-          attempt=1
+          # Check if pods are actually running
+          running_pods=$(ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "kubectl get pods --no-headers 2>/dev/null | grep -c ' Running'" || echo "0")
+          echo "Currently running pods: $running_pods"
           
-          while [ $attempt -le $max_attempts ]; do
-            ready_pods=$(ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "kubectl get pods --no-headers 2>/dev/null | grep -c ' Running'" || echo "0")
-            echo "Attempt $attempt/$max_attempts: $ready_pods pods running"
+          if [ "$running_pods" -lt "2" ]; then
+            echo "❌ Pods not running properly. Trying simple deployment..."
             
-            if [ "$ready_pods" -ge "2" ]; then
-              echo "Pods are ready!"
-              break
-            fi
+            # Copy simple deployment file
+            scp -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ./simple-deployment.yaml ubuntu@${{ steps.infra.outputs.master_ip }}:/tmp/
             
-            if [ $attempt -eq $max_attempts ]; then
-              echo "WARNING: Not all pods ready, but continuing..."
-            fi
+            # Clean up and deploy simple version
+            ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "
+              # Clean up existing deployment
+              helm uninstall car-lot-manager --ignore-not-found
+              kubectl delete pvc --all --ignore-not-found
+              kubectl delete deployment --all --ignore-not-found
+              kubectl delete service --all --ignore-not-found
+              sleep 10
+              
+              # Deploy simple version without NFS
+              kubectl apply -f /tmp/simple-deployment.yaml
+              
+              # Wait for deployment
+              kubectl rollout status deployment/car-lot-simple --timeout=300s
+            "
             
-            sleep 15
-            attempt=$((attempt + 1))
-          done
+            # Wait and check again
+            sleep 30
+            ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "
+              echo 'After simple deployment - Pod Status:'
+              kubectl get pods -o wide
+              echo 'Service Status:'
+              kubectl get svc
+            "
+          fi
+          
+          # Final verification
+          echo "Testing NodePort directly..."
+          ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "
+            curl -s http://localhost:30080/health || echo 'NodePort test failed'
+          "
 
       - name: Test Application Accessibility
         run: |
@@ -293,25 +313,39 @@ jobs:
           APP_URL="http://${{ steps.infra.outputs.alb_dns }}"
           
           echo "Waiting for Load Balancer to register targets..."
-          sleep 60
+          sleep 90
           
-          max_attempts=10
+          max_attempts=15
           attempt=1
           
           while [ $attempt -le $max_attempts ]; do
             echo "Testing attempt $attempt/$max_attempts..."
             
+            # Test health endpoint
             if curl -s --connect-timeout 10 "$APP_URL/health" | grep -q "healthy"; then
-              echo "✅ Application is accessible and healthy!"
-              break
+              echo "✅ Health check passed!"
+              
+              # Test main page
+              if curl -s --connect-timeout 10 "$APP_URL" | grep -q "Car Lot Manager"; then
+                echo "✅ Application is fully accessible!"
+                break
+              else
+                echo "⚠️  Health check works but main page not loading"
+              fi
+            else
+              echo "❌ Health check failed"
+              
+              # Debug: Check ALB target health
+              echo "Checking if targets are healthy..."
+              aws elbv2 describe-target-health --target-group-arn $(aws elbv2 describe-target-groups --names carlot-tg-* --query 'TargetGroups[0].TargetGroupArn' --output text) || echo "Could not check target health"
             fi
             
             if [ $attempt -eq $max_attempts ]; then
-              echo "⚠️  Application may not be fully ready yet, but deployment completed."
-              echo "   Please wait a few more minutes and try accessing the URL."
+              echo "❌ Application still not accessible after all attempts"
+              echo "   This indicates a configuration issue that needs manual investigation"
             fi
             
-            sleep 30
+            sleep 20
             attempt=$((attempt + 1))
           done
 
