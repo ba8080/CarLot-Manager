@@ -59,47 +59,42 @@ jobs:
       - name: Terraform Apply
         run: terraform apply -auto-approve tfplan
 
-      - name: Output ALB DNS and Public IP
+      - name: Output ALB DNS
         id: infra
         run: |
-          alb_dns=$(terraform output -raw alb_dns_name)
+          # שולל debug/info
+          alb_dns=$(terraform output -raw alb_dns_name 2>/dev/null)
           echo "alb_dns=$alb_dns" >> $GITHUB_OUTPUT
           echo "ALB DNS: $alb_dns"
 
-          # Resolve DNS ל-IP ציבורי באמצעות nslookup
-          alb_ip=$(nslookup $alb_dns | awk '/^Address: / { print $2; exit }')
+  resolve_ip:
+    name: Resolve ALB Public IP
+    runs-on: ubuntu-latest
+    needs: terraform
+    steps:
+      - name: Get ALB IP
+        run: |
+          URL=${{ needs.terraform.outputs.alb_dns }}
+          # Resolve DNS ל-IP ציבורי
+          alb_ip=$(getent ahosts $URL | awk '{ print $1; exit }')
+          echo "alb_ip=$alb_ip"
           echo "alb_ip=$alb_ip" >> $GITHUB_OUTPUT
-          echo "ALB Public IP: $alb_ip"
-
-      - name: Create Deployment URL File
-        run: echo "http://${{ steps.infra.outputs.alb_dns }}" > deployment_url.txt
-
-      - name: Upload Deployment URL
-        uses: actions/upload-artifact@v4
-        with:
-          name: deployment-url
-          path: deployment_url.txt
 
   notify:
-    needs: terraform
+    needs: [terraform, resolve_ip]
     runs-on: ubuntu-latest
     steps:
-      - name: Download Deployment URL
-        uses: actions/download-artifact@v4
-        with:
-          name: deployment-url
-
       - name: Print Deployment Info
         run: |
           echo "=============================="
           echo "🚀 Application Deployed!"
-          echo "URL: http://${{ steps.infra.outputs.alb_dns }}"
-          echo "ALB Public IP: ${{ steps.infra.outputs.alb_ip }}"
+          echo "URL: http://${{ needs.terraform.outputs.alb_dns }}"
+          echo "ALB Public IP: ${{ needs.resolve_ip.outputs.alb_ip }}"
           echo "=============================="
 
       - name: Check Application Health
         run: |
-          URL=$(cat deployment_url.txt)
+          URL="http://${{ needs.terraform.outputs.alb_dns }}"
           echo "Checking health at: $URL"
           
           for i in {1..10}; do
