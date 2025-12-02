@@ -62,13 +62,12 @@ jobs:
       - name: Output ALB DNS and Public IP
         id: infra
         run: |
-          # קבלת ה-DNS מה-Terraform
           alb_dns=$(terraform output -raw alb_dns_name)
           echo "alb_dns=$alb_dns" >> $GITHUB_OUTPUT
           echo "ALB DNS: $alb_dns"
 
           # Resolve DNS ל-IP ציבורי
-          alb_ip=$(dig +short $alb_dns | head -n1)
+          alb_ip=$(getent hosts $alb_dns | awk '{ print $1 }')
           echo "alb_ip=$alb_ip" >> $GITHUB_OUTPUT
           echo "ALB Public IP: $alb_ip"
 
