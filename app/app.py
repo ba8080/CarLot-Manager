@@ -2,6 +2,7 @@ from flask import Flask, render_template_string, request, redirect, url_for, jso
 import json
 import os
 
+
 app = Flask(__name__)
 DATA_FILE = os.environ.get('DATA_FILE', 'data/inventory.json')
 
