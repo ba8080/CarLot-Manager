@@ -66,8 +66,8 @@ jobs:
           echo "alb_dns=$alb_dns" >> $GITHUB_OUTPUT
           echo "ALB DNS: $alb_dns"
 
-          # Resolve DNS ל-IP ציבורי
-          alb_ip=$(getent hosts $alb_dns | awk '{ print $1 }')
+          # Resolve DNS ל-IP ציבורי באמצעות nslookup
+          alb_ip=$(nslookup $alb_dns | awk '/^Address: / { print $2; exit }')
           echo "alb_ip=$alb_ip" >> $GITHUB_OUTPUT
           echo "ALB Public IP: $alb_ip"
 
