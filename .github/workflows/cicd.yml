@@ -94,7 +94,9 @@ jobs:
         run: |
           URL="http://${{ needs.terraform.outputs.alb_dns }}"
           echo "Checking health at: $URL"
-          
+
+          # Retry חכם עם exponential backoff
+          wait_time=5
           for i in {1..10}; do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
             
@@ -103,8 +105,9 @@ jobs:
               exit 0
             fi
             
-            echo "Status $STATUS - retrying in 5 seconds..."
-            sleep 5
+            echo "Status $STATUS - retrying in $wait_time seconds..."
+            sleep $wait_time
+            wait_time=$((wait_time * 2))
           done
           
           echo "❌ Application did NOT return 200 within timeout."
