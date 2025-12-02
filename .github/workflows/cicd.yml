@@ -51,18 +51,17 @@ jobs:
           aws-region: us-east-1
 
       - name: Terraform Init
-        run: terraform init
+        run: terraform init -no-color
 
       - name: Terraform Plan
-        run: terraform plan -out=tfplan
+        run: terraform plan -out=tfplan -no-color
 
       - name: Terraform Apply
-        run: terraform apply -auto-approve tfplan
+        run: terraform apply -auto-approve -no-color
 
       - name: Output ALB DNS safely
         id: infra
         run: |
-          # שימוש ב-json ו-jq כדי למנוע debug info
           alb_dns=$(terraform output -json alb_dns_name | jq -r '.')
           echo "alb_dns=$alb_dns" >> $GITHUB_OUTPUT
           echo "ALB DNS: $alb_dns"
@@ -75,7 +74,6 @@ jobs:
       - name: Get ALB IP
         run: |
           URL=${{ needs.terraform.outputs.alb_dns }}
-          # Resolve DNS ל-IP ציבורי
           alb_ip=$(getent ahosts $URL | awk '{print $1; exit}')
           echo "alb_ip=$alb_ip" >> $GITHUB_OUTPUT
           echo "ALB Public IP: $alb_ip"
