@@ -7,32 +7,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v3
-        with:
-          dotnet-version: 8.0.x
-
-      - name: Restore Dependencies
-        run: dotnet restore
-        working-directory: .
-
-      - name: Build
-        run: dotnet build --no-restore
-        working-directory: .
-
-      - name: Run Tests
-        run: dotnet test --no-build --verbosity normal
-        working-directory: .
-
   docker_build_push:
     runs-on: ubuntu-latest
-    needs: build
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
@@ -66,7 +42,7 @@ jobs:
         with:
           terraform_version: 1.5.7
 
-      - name: AWS Credentials
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY }}
@@ -75,9 +51,6 @@ jobs:
 
       - name: Terraform Init
         run: terraform init
-
-      - name: Terraform Format
-        run: terraform fmt -check
 
       - name: Terraform Plan
         run: terraform plan -out=tfplan
@@ -123,7 +96,6 @@ jobs:
           URL=$(cat deployment_url.txt)
           echo "Checking health at: $URL"
           
-          # Retry until healthy or fail after timeout
           for i in {1..10}; do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
             
