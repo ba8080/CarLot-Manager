@@ -59,12 +59,18 @@ jobs:
       - name: Terraform Apply
         run: terraform apply -auto-approve tfplan
 
-      - name: Output ALB DNS
+      - name: Output ALB DNS and Public IP
         id: infra
         run: |
-          alb_dns=$(terraform output -raw alb_dns)
+          # קבלת ה-DNS מה-Terraform
+          alb_dns=$(terraform output -raw alb_dns_name)
           echo "alb_dns=$alb_dns" >> $GITHUB_OUTPUT
           echo "ALB DNS: $alb_dns"
+
+          # Resolve DNS ל-IP ציבורי
+          alb_ip=$(dig +short $alb_dns | head -n1)
+          echo "alb_ip=$alb_ip" >> $GITHUB_OUTPUT
+          echo "ALB Public IP: $alb_ip"
 
       - name: Create Deployment URL File
         run: echo "http://${{ steps.infra.outputs.alb_dns }}" > deployment_url.txt
@@ -84,12 +90,12 @@ jobs:
         with:
           name: deployment-url
 
-      - name: Print Deployment URL
+      - name: Print Deployment Info
         run: |
           echo "=============================="
           echo "🚀 Application Deployed!"
-          echo "URL:"
-          cat deployment_url.txt
+          echo "URL: http://${{ steps.infra.outputs.alb_dns }}"
+          echo "ALB Public IP: ${{ steps.infra.outputs.alb_ip }}"
           echo "=============================="
 
       - name: Check Application Health
