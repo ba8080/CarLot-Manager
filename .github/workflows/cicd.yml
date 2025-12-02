@@ -31,7 +31,7 @@ jobs:
     needs: docker_build_push
     defaults:
       run:
-        working-directory: infra/
+        working-directory: terraform/
 
     steps:
       - name: Checkout Code
@@ -97,7 +97,6 @@ jobs:
           URL=$(cat deployment_url.txt)
           echo "Checking health at: $URL"
           
-          # Retry until healthy or fail after timeout
           for i in {1..10}; do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
             
