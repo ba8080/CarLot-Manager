@@ -1,155 +1,137 @@
-name: Complete CI/CD Pipeline
+name: Full CI/CD Pipeline
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   workflow_dispatch:
 
-env:
-  AWS_REGION: us-east-1
-  DOCKER_IMAGE: azexkush/car-lot-manager
-  DOCKER_TAG: latest
-
 jobs:
-  build-and-push:
-    name: Build and Push Docker Image
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore Dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore
+
+      - name: Run Tests
+        run: dotnet test --no-build --verbosity normal
+
+  docker_build_push:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and Push Docker Image
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: |
-            ${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
-            ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.DOCKER_IMAGE }}:buildcache
-          cache-to: type=registry,ref=${{ env.DOCKER_IMAGE }}:buildcache,mode=max
+      - name: Build Docker Image
+        run: docker build -t ${{ secrets.DOCKER_USERNAME }}/carlot-manager:latest -f CarLot-Manager.API/Dockerfile .
 
-      - name: Verify Image
-        run: |
-          docker pull ${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
-          docker run --rm ${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }} python -c "import flask; print('Flask:', flask.__version__)"
+      - name: Push Docker Image
+        run: docker push ${{ secrets.DOCKER_USERNAME }}/carlot-manager:latest
 
-  deploy:
-    name: Deploy Infrastructure + K8s + App
-    needs: build-and-push
+  terraform:
+    name: Deploy Infrastructure (Terraform)
     runs-on: ubuntu-latest
+    needs: docker_build_push
+    defaults:
+      run:
+        working-directory: infra/
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_wrapper: false
+          terraform_version: 1.5.7
+
+      - name: AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY }}
+          aws-region: eu-central-1
 
       - name: Terraform Init
-        working-directory: ./terraform
         run: terraform init
 
-      - name: Destroy Old Infra (Optional)
-        working-directory: ./terraform
-        run: terraform destroy -auto-approve
-        continue-on-error: true
+      - name: Terraform Format
+        run: terraform fmt -check
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
 
       - name: Terraform Apply
-        working-directory: ./terraform
-        run: terraform apply -auto-approve
+        run: terraform apply -auto-approve tfplan
 
-      - name: Extract Infra Outputs
+      - name: Output ALB DNS
         id: infra
-        working-directory: ./terraform
         run: |
-          ALB_DNS=$(terraform output -raw alb_dns_name)
-          MASTER_PRIVATE_IP=$(terraform output -raw master_private_ip)
-          INSTANCE_IPS=$(terraform output -json instance_ips)
+          alb_dns=$(terraform output -raw alb_dns)
+          echo "alb_dns=$alb_dns" >> $GITHUB_OUTPUT
+          echo "ALB DNS: $alb_dns"
 
-          MASTER_IP=$(echo $INSTANCE_IPS | jq -r '.[0]')
-          WORKER1_IP=$(echo $INSTANCE_IPS | jq -r '.[1]')
-          WORKER2_IP=$(echo $INSTANCE_IPS | jq -r '.[2]')
-
-          echo "alb_dns=$ALB_DNS" >> $GITHUB_OUTPUT
-          echo "master_ip=$MASTER_IP" >> $GITHUB_OUTPUT
-          echo "master_private_ip=$MASTER_PRIVATE_IP" >> $GITHUB_OUTPUT
-          echo "worker1_ip=$WORKER1_IP" >> $GITHUB_OUTPUT
-          echo "worker2_ip=$WORKER2_IP" >> $GITHUB_OUTPUT
-
-          terraform output -raw ssh_private_key > /tmp/ssh_key.pem
-          chmod 400 /tmp/ssh_key.pem
-
-      - name: Wait for EC2 to Boot
-        run: sleep 90
-
-      - name: Install Ansible
-        run: sudo apt-get update && sudo apt-get install -y ansible
-
-      - name: Create Ansible Inventory
-        run: |
-          mkdir -p ansible
-          cat > ansible/inventory.ini << EOF
-          [master]
-          ${{ steps.infra.outputs.master_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/ssh_key.pem
-
-          [worker]
-          ${{ steps.infra.outputs.worker1_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/ssh_key.pem
-          ${{ steps.infra.outputs.worker2_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/ssh_key.pem
-
-          [all:vars]
-          ansible_python_interpreter=/usr/bin/python3
-          EOF
-
-      - name: Run Ansible Playbook
-        run: |
-          cd ansible
-          ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory.ini playbook.yml -vv
-
-      - name: Deploy Application on Kubernetes
-        run: |
-          echo "Copying manifest..."
-          scp -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no simple-deployment.yaml ubuntu@${{ steps.infra.outputs.master_ip }}:/tmp/
-
-          echo "Deploying..."
-          ssh -i /tmp/ssh_key.pem -o StrictHostKeyChecking=no ubuntu@${{ steps.infra.outputs.master_ip }} "
-            kubectl apply -f /tmp/simple-deployment.yaml
-            kubectl rollout status deployment/car-lot-simple --timeout=300s
-            kubectl get pods -o wide
-            kubectl get svc
-          "
-
-      - name: Test Load Balancer
-        run: |
-          APP=http://${{ steps.infra.outputs.alb_dns }}
-          echo "Testing $APP"
-          for i in {1..20}; do
-            curl -s --connect-timeout 5 \$APP/health && echo "OK" && break
-            sleep 10
-          done
+      - name: Create Deployment URL File
+        run: echo "http://${{ steps.infra.outputs.alb_dns }}" > deployment_url.txt
 
       - name: Upload Deployment URL
         uses: actions/upload-artifact@v4
         with:
           name: deployment-url
           path: deployment_url.txt
-        run: echo "http://${{ steps.infra.outputs.alb_dns }}" > deployment_url.txt
+
+  notify:
+    needs: terraform
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Deployment URL
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-url
+
+      - name: Print Deployment URL
+        run: |
+          echo "=============================="
+          echo "🚀 Application Deployed!"
+          echo "URL:"
+          cat deployment_url.txt
+          echo "=============================="
+
+      - name: Check Application Health
+        run: |
+          URL=$(cat deployment_url.txt)
+          echo "Checking health at: $URL"
+          
+          # Retry until healthy or fail after timeout
+          for i in {1..10}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
+            
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ Application is healthy! (HTTP 200)"
+              exit 0
+            fi
+            
+            echo "Status $STATUS - retrying in 5 seconds..."
+            sleep 5
+          done
+          
+          echo "❌ Application did NOT return 200 within timeout."
+          exit 1
