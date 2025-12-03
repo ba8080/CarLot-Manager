@@ -32,8 +32,6 @@ jobs:
     defaults:
       run:
         working-directory: terraform/
-    outputs:
-      alb_dns_name: ${{ steps.alb_output.outputs.alb_dns_name }}
 
     steps:
       - name: Checkout Code
@@ -57,22 +55,22 @@ jobs:
 
       - name: Terraform Plan
         id: plan
-        run: terraform plan -out=tfplan -input=false -no-color || true
+        run: terraform plan -out=tfplan -input=false -no-color
 
       - name: Terraform Apply
         id: apply
-        run: terraform apply -input=false -auto-approve -no-color tfplan || true
+        run: terraform apply -input=false -auto-approve -no-color tfplan
 
       - name: Output ALB DNS
         id: alb_output
         run: |
-          alb_dns_name=$(terraform output -raw alb_dns_name 2>/dev/null | tr -d '\r\n')
-          if [ -z "$alb_dns_name" ]; then
+          alb_dns=$(terraform output -raw alb_dns_name 2>/dev/null | tr -d '\r\n')
+          if [ -z "$alb_dns" ]; then
             echo "ERROR: alb_dns_name output is empty or ALB not created"
             exit 1
           fi
-          echo "alb_dns_name=$alb_dns_name" >> "$GITHUB_OUTPUT"
-          echo "ALB DNS: $alb_dns_name"
+          echo "alb_dns=$alb_dns" >> "$GITHUB_OUTPUT"
+          echo "ALB DNS: $alb_dns"
 
   resolve_ip:
     name: Resolve ALB Public IP
@@ -81,7 +79,7 @@ jobs:
     steps:
       - name: Resolve ALB IP
         run: |
-          ALB_DNS=${{ needs.terraform.outputs.alb_dns_name }}
+          ALB_DNS=${{ needs.terraform.outputs.alb_dns }}
           if [ -z "$ALB_DNS" ]; then
             echo "ERROR: ALB DNS is empty, skipping resolve"
             exit 1
@@ -112,13 +110,13 @@ jobs:
         run: |
           echo "=============================="
           echo "🚀 Application Deployed!"
-          echo "URL: http://${{ needs.terraform.outputs.alb_dns_name }}"
+          echo "URL: http://${{ needs.terraform.outputs.alb_dns }}"
           echo "ALB Public IP: ${{ needs.resolve_ip.outputs.alb_ip }}"
           echo "=============================="
 
       - name: Check Application Health
         run: |
-          URL="http://${{ needs.terraform.outputs.alb_dns_name }}"
+          URL="http://${{ needs.terraform.outputs.alb_dns }}"
           echo "Checking health at: $URL"
 
           wait_time=5
