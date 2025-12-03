@@ -6,12 +6,18 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+  pull-requests: write
+
 jobs:
   docker_build_push:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -33,36 +39,60 @@ jobs:
       run:
         working-directory: terraform/
 
+    env:
+      AWS_REGION: us-east-1
+
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+
+      - name: Setup AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.7
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: us-east-1
+      - name: Ensure backend-config is present
+        run: |
+          # Provide backend config via env secrets to avoid committing credentials
+          echo "bucket=${{ secrets.TF_STATE_S3_BUCKET }}" > backend.tfvars
+          echo "key=${{ secrets.TF_STATE_S3_KEY }}" >> backend.tfvars
+          echo "region=${{ env.AWS_REGION }}" >> backend.tfvars
+          echo "dynamodb_table=${{ secrets.TF_STATE_DDB_TABLE }}" >> backend.tfvars
 
-      - name: Terraform Init
-        run: terraform init -no-color
+      - name: Terraform Init (with backend)
+        run: |
+          terraform init -input=false -no-color -backend-config=backend.tfvars
+
+      - name: Terraform Validate
+        run: terraform validate -no-color
 
       - name: Terraform Plan
-        run: terraform plan -out=tfplan -no-color
+        id: plan
+        run: |
+          terraform plan -out=tfplan -input=false -no-color
 
       - name: Terraform Apply
-        run: terraform apply -auto-approve -no-color
+        id: apply
+        run: |
+          terraform apply -input=false -auto-approve -no-color tfplan
 
       - name: Output ALB DNS safely
         id: infra
         run: |
-          alb_dns=$(terraform output -json alb_dns_name | jq -r '.')
+          # Use -raw to avoid JSON parsing issues and jq
+          alb_dns=$(terraform output -raw alb_dns_name)
+          if [ -z "$alb_dns" ]; then
+            echo "ERROR: alb_dns_name output is empty or not found"
+            exit 1
+          fi
           echo "alb_dns=$alb_dns" >> $GITHUB_OUTPUT
           echo "ALB DNS: $alb_dns"
 
@@ -71,12 +101,26 @@ jobs:
     runs-on: ubuntu-latest
     needs: terraform
     steps:
-      - name: Get ALB IP
+      - name: Wait for DNS and Resolve ALB IP
         run: |
           URL=${{ needs.terraform.outputs.alb_dns }}
-          alb_ip=$(getent ahosts $URL | awk '{print $1; exit}')
-          echo "alb_ip=$alb_ip" >> $GITHUB_OUTPUT
-          echo "ALB Public IP: $alb_ip"
+          # strip possible protocol
+          HOST=$(echo "$URL" | sed -E 's~https?://~~')
+
+          # Wait for a DNS record to resolve (max ~120s)
+          for i in {1..12}; do
+            alb_ip=$(getent ahosts "$HOST" | awk '{print $1; exit}' || true)
+            if [ -n "$alb_ip" ]; then
+              echo "alb_ip=$alb_ip" >> $GITHUB_OUTPUT
+              echo "ALB Public IP: $alb_ip"
+              exit 0
+            fi
+            echo "DNS not ready yet, retrying... ($i)"
+            sleep 10
+          done
+
+          echo "ERROR: Could not resolve ALB public IP for $HOST"
+          exit 1
 
   notify:
     needs: [terraform, resolve_ip]
@@ -95,20 +139,20 @@ jobs:
           URL="http://${{ needs.terraform.outputs.alb_dns }}"
           echo "Checking health at: $URL"
 
-          # Retry חכם עם exponential backoff
+          # Retry with exponential backoff
           wait_time=5
           for i in {1..10}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
-            
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || true)
+
             if [ "$STATUS" = "200" ]; then
               echo "✅ Application is healthy! (HTTP 200)"
               exit 0
             fi
-            
+
             echo "Status $STATUS - retrying in $wait_time seconds..."
             sleep $wait_time
             wait_time=$((wait_time * 2))
           done
-          
+
           echo "❌ Application did NOT return 200 within timeout."
           exit 1
