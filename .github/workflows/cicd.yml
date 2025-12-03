@@ -64,13 +64,11 @@ jobs:
       - name: Output ALB DNS
         id: alb_output
         run: |
-          # Capture the output ALB DNS from Terraform
           alb_dns_name=$(terraform output -raw alb_dns_name 2>/dev/null | tr -d '\r\n')
-          
           if [ -z "$alb_dns_name" ]; then
-            echo "WARNING: alb_dns_name output is empty or ALB not created"
+            echo "ERROR: alb_dns_name output is empty or ALB not created"
+            exit 1
           fi
-
           echo "alb_dns_name=$alb_dns_name" >> "$GITHUB_OUTPUT"
           echo "ALB DNS: $alb_dns_name"
 
@@ -79,18 +77,17 @@ jobs:
     runs-on: ubuntu-latest
     needs: terraform
     steps:
-      - name: Wait for DNS and Resolve ALB IP
+      - name: Resolve ALB IP
         run: |
           ALB_DNS=${{ needs.terraform.outputs.alb_dns_name }}
-
           if [ -z "$ALB_DNS" ]; then
             echo "ERROR: ALB DNS is empty, skipping resolve"
             exit 1
           fi
 
           HOST=$(echo "$ALB_DNS" | sed -E 's~https?://~~; s~/$~~')
-
           echo "Waiting for ALB DNS to be ready..."
+
           for i in {1..30}; do
             alb_ip=$(dig +short "$HOST" | head -n 1 || true)
             if [ -n "$alb_ip" ]; then
@@ -125,7 +122,6 @@ jobs:
           wait_time=5
           for i in {1..10}; do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || true)
-
             if [ "$STATUS" = "200" ]; then
               echo "✅ Application is healthy! (HTTP 200)"
               exit 0
