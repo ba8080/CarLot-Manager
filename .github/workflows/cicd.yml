@@ -86,12 +86,15 @@ jobs:
       - name: Output ALB DNS
         id: infra
         run: |
-          # Use -raw to avoid JSON parsing issues and jq
-          alb_dns=$(terraform output -raw alb_dns_name 2>/dev/null)
+          # Capture ONLY the raw output, ignore debug/log messages
+          alb_dns=$(terraform output -raw alb_dns_name 2>/dev/null | tr -d '\r\n')
+
           if [ -z "$alb_dns" ]; then
             echo "ERROR: alb_dns_name output is empty or not found"
             exit 1
           fi
+
+          # Write clean output to GitHub Actions
           printf "alb_dns=%s\n" "$alb_dns" >> "$GITHUB_OUTPUT"
           echo "ALB DNS: $alb_dns"
 
