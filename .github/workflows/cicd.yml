@@ -61,7 +61,6 @@ jobs:
 
       - name: Ensure backend-config is present
         run: |
-          # Provide backend config via env secrets to avoid committing credentials
           echo "bucket=${{ secrets.TF_STATE_S3_BUCKET }}" > backend.tfvars
           echo "key=${{ secrets.TF_STATE_S3_KEY }}" >> backend.tfvars
           echo "region=${{ env.AWS_REGION }}" >> backend.tfvars
@@ -84,17 +83,16 @@ jobs:
         run: |
           terraform apply -input=false -auto-approve -no-color tfplan
 
-      - name: Output # --- ALB Output (fixed)
-echo "ALB DNS=$(terraform output -raw alb_dns_name)" >> "$GITHUB_OUTPUT" DNS safely
+      - name: Output ALB DNS
         id: infra
         run: |
           # Use -raw to avoid JSON parsing issues and jq
-          alb_dns=$(terraform output -raw alb_dns_name)
+          alb_dns=$(terraform output -raw alb_dns_name 2>/dev/null)
           if [ -z "$alb_dns" ]; then
             echo "ERROR: alb_dns_name output is empty or not found"
             exit 1
           fi
-          echo "alb_dns=$alb_dns" >> $GITHUB_OUTPUT
+          printf "alb_dns=%s\n" "$alb_dns" >> "$GITHUB_OUTPUT"
           echo "ALB DNS: $alb_dns"
 
   resolve_ip:
@@ -105,10 +103,8 @@ echo "ALB DNS=$(terraform output -raw alb_dns_name)" >> "$GITHUB_OUTPUT" DNS saf
       - name: Wait for DNS and Resolve ALB IP
         run: |
           URL=${{ needs.terraform.outputs.alb_dns }}
-          # strip possible protocol
           HOST=$(echo "$URL" | sed -E 's~https?://~~')
 
-          # Wait for a DNS record to resolve (max ~120s)
           for i in {1..12}; do
             alb_ip=$(getent ahosts "$HOST" | awk '{print $1; exit}' || true)
             if [ -n "$alb_ip" ]; then
@@ -140,7 +136,6 @@ echo "ALB DNS=$(terraform output -raw alb_dns_name)" >> "$GITHUB_OUTPUT" DNS saf
           URL="http://${{ needs.terraform.outputs.alb_dns }}"
           echo "Checking health at: $URL"
 
-          # Retry with exponential backoff
           wait_time=5
           for i in {1..10}; do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || true)
