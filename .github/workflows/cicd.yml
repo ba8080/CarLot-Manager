@@ -127,6 +127,7 @@ jobs:
               exit 0
             fi
 
+
             echo "Status $STATUS - retrying in $wait_time seconds..."
             sleep $wait_time
             wait_time=$((wait_time * 2))
