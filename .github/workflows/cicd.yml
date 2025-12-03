@@ -32,6 +32,8 @@ jobs:
     defaults:
       run:
         working-directory: terraform/
+    outputs:
+      alb_dns_name: ${{ steps.alb_output.outputs.alb_dns_name }}
 
     steps:
       - name: Checkout Code
@@ -69,7 +71,6 @@ jobs:
             echo "ERROR: alb_dns_name output is empty or ALB not created"
             exit 1
           fi
-          # דחיפה של ה-DNS ל-output של ה-step
           echo "alb_dns_name=$alb_dns_name" >> "$GITHUB_OUTPUT"
           echo "ALB DNS: $alb_dns_name"
 
