@@ -55,11 +55,11 @@ jobs:
 
       - name: Terraform Plan
         id: plan
-        run: terraform plan -out=tfplan -input=false -no-color || true
+        run: terraform plan -out=tfplan -input=false -no-color
 
       - name: Terraform Apply
         id: apply
-        run: terraform apply -input=false -auto-approve -no-color tfplan || true
+        run: terraform apply -input=false -auto-approve -no-color tfplan
 
       - name: Output ALB DNS
         id: alb_output
@@ -71,6 +71,10 @@ jobs:
           fi
           echo "alb_dns_name=$alb_dns_name" >> "$GITHUB_OUTPUT"
           echo "ALB DNS: $alb_dns_name"
+
+    # כאן מוסיפים את ה-output של ה-job עצמו
+    outputs:
+      alb_dns_name: ${{ steps.alb_output.outputs.alb_dns_name }}
 
   resolve_ip:
     name: Resolve ALB Public IP
