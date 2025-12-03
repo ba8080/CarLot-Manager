@@ -74,17 +74,19 @@ jobs:
         run: terraform apply -input=false -auto-approve -no-color tfplan
 
       - name: Output ALB DNS
-        id: infra
+        id: alb_output
         run: |
-          alb_dns=$(terraform output -raw alb_dns_name 2>/dev/null | tr -d '\r\n')
+          # Capture the output ALB DNS from Terraform
+          alb_dns_name=$(terraform output -raw alb_dns_name 2>/dev/null | tr -d '\r\n')
 
-          if [ -z "$alb_dns" ]; then
+          if [ -z "$alb_dns_name" ]; then
             echo "ERROR: alb_dns_name output is empty or not found"
             exit 1
           fi
 
-          printf "alb_dns=%s\n" "$alb_dns" >> "$GITHUB_OUTPUT"
-          echo "ALB DNS: $alb_dns"
+          # Write clean output to GitHub Actions
+          echo "alb_dns_name=$alb_dns_name" >> "$GITHUB_OUTPUT"
+          echo "ALB DNS: $alb_dns_name"
 
   resolve_ip:
     name: Resolve ALB Public IP
@@ -93,8 +95,8 @@ jobs:
     steps:
       - name: Wait for DNS and Resolve ALB IP
         run: |
-          URL=${{ needs.terraform.outputs.alb_dns }}
-          HOST=$(echo "$URL" | sed -E 's~https?://~~; s~/$~~')
+          ALB_DNS=${{ needs.terraform.outputs.alb_dns_name }}
+          HOST=$(echo "$ALB_DNS" | sed -E 's~https?://~~; s~/$~~')
 
           echo "Waiting for ALB DNS to be ready..."
           for i in {1..30}; do
@@ -119,13 +121,13 @@ jobs:
         run: |
           echo "=============================="
           echo "🚀 Application Deployed!"
-          echo "URL: http://${{ needs.terraform.outputs.alb_dns }}"
+          echo "URL: http://${{ needs.terraform.outputs.alb_dns_name }}"
           echo "ALB Public IP: ${{ needs.resolve_ip.outputs.alb_ip }}"
           echo "=============================="
 
       - name: Check Application Health
         run: |
-          URL="http://${{ needs.terraform.outputs.alb_dns }}"
+          URL="http://${{ needs.terraform.outputs.alb_dns_name }}"
           echo "Checking health at: $URL"
 
           wait_time=5
