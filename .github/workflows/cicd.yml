@@ -84,7 +84,8 @@ jobs:
         run: |
           terraform apply -input=false -auto-approve -no-color tfplan
 
-      - name: Output ALB DNS safely
+      - name: Output # --- ALB Output (fixed)
+echo "ALB DNS=$(terraform output -raw alb_dns_name)" >> "$GITHUB_OUTPUT" DNS safely
         id: infra
         run: |
           # Use -raw to avoid JSON parsing issues and jq
