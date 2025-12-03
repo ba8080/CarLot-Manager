@@ -15,7 +15,6 @@ INITIAL_DATA = [
     {"id": 5, "make": "BMW", "model": "X5", "year": 2022, "price": 58000, "status": "available"}
 ]
 
-
 def load_data():
     if not os.path.exists(DATA_FILE):
         # Ensure directory exists
