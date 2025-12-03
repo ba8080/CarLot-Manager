@@ -32,7 +32,8 @@ jobs:
     defaults:
       run:
         working-directory: terraform/
-
+    outputs:
+      alb_dns_name: ${{ steps.alb_output.outputs.alb_dns_name }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -72,9 +73,8 @@ jobs:
           echo "alb_dns_name=$alb_dns_name" >> "$GITHUB_OUTPUT"
           echo "ALB DNS: $alb_dns_name"
 
-    # כאן מוסיפים את ה-output של ה-job עצמו
-    outputs:
-      alb_dns_name: ${{ steps.alb_output.outputs.alb_dns_name }}
+      - name: Debug - Show ALB DNS
+        run: terraform output -raw alb_dns_name
 
   resolve_ip:
     name: Resolve ALB Public IP
@@ -130,7 +130,6 @@ jobs:
               echo "✅ Application is healthy! (HTTP 200)"
               exit 0
             fi
-
 
             echo "Status $STATUS - retrying in $wait_time seconds..."
             sleep $wait_time
