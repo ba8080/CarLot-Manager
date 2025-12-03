@@ -76,7 +76,6 @@ jobs:
       - name: Output ALB DNS
         id: infra
         run: |
-          # Capture ONLY the raw output, ignore debug/log messages
           alb_dns=$(terraform output -raw alb_dns_name 2>/dev/null | tr -d '\r\n')
 
           if [ -z "$alb_dns" ]; then
@@ -84,7 +83,6 @@ jobs:
             exit 1
           fi
 
-          # Write clean output to GitHub Actions
           printf "alb_dns=%s\n" "$alb_dns" >> "$GITHUB_OUTPUT"
           echo "ALB DNS: $alb_dns"
 
@@ -96,18 +94,18 @@ jobs:
       - name: Wait for DNS and Resolve ALB IP
         run: |
           URL=${{ needs.terraform.outputs.alb_dns }}
-          HOST=$(echo "$URL" | sed -E 's~https?://~~')
+          HOST=$(echo "$URL" | sed -E 's~https?://~~; s~/$~~')
 
           echo "Waiting for ALB DNS to be ready..."
-          for i in {1..20}; do
-            alb_ip=$(getent ahosts "$HOST" | awk '{print $1; exit}' || true)
+          for i in {1..30}; do
+            alb_ip=$(dig +short "$HOST" | head -n 1 || true)
             if [ -n "$alb_ip" ]; then
               echo "alb_ip=$alb_ip" >> $GITHUB_OUTPUT
               echo "ALB Public IP: $alb_ip"
               exit 0
             fi
             echo "DNS not ready yet, retrying... ($i)"
-            sleep 15
+            sleep 10
           done
 
           echo "ERROR: Could not resolve ALB public IP for $HOST"
