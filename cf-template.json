@@ -1,0 +1,79 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Car Lot Manager - Initial Master Node",
+  "Resources": {
+    "MasterSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Security group for master node",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 6443,
+            "ToPort": 6443,
+            "CidrIp": "10.0.0.0/8"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 2049,
+            "ToPort": 2049,
+            "CidrIp": "10.0.0.0/8"
+          }
+        ]
+      }
+    },
+    "MasterEC2Instance": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "ImageId": "ami-0c55b159cbfafe1f0",
+        "InstanceType": "t2.medium",
+        "KeyName": "car-lot-deployer",
+        "SecurityGroupIds": [
+          {
+            "Ref": "MasterSecurityGroup"
+          }
+        ],
+        "IamInstanceProfile": "EC2-DevOps-Role",
+        "UserData": "IyEvYmluL2Jhc2gKc3VkbyBhcHQtZ2V0IHVwZGF0ZQpzdWRvIGFwdC1nZXQgaW5zdGFsbCAteSBjdXJs"
+      }
+    }
+  },
+  "Outputs": {
+    "MasterPublicIP": {
+      "Value": {
+        "Fn::GetAtt": [
+          "MasterEC2Instance",
+          "PublicIp"
+        ]
+      },
+      "Description": "Public IP of master node"
+    },
+    "MasterPrivateIP": {
+      "Value": {
+        "Fn::GetAtt": [
+          "MasterEC2Instance",
+          "PrivateIp"
+        ]
+      },
+      "Description": "Private IP of master node"
+    }
+  }
+}
