@@ -1,17 +1,12 @@
-replicaCount: 2
+replicaCount: 1
 
 image:
-  repository: azexkush/car-lot-manager
-  pullPolicy: Always
+  repository: ba8080/carlot-app    
   tag: "latest"
+  pullPolicy: Always
 
 service:
-  type: NodePort
-  port: 80
-  targetPort: 5000
-  nodePort: 30080
+  type: NodePort        
+  port: 8501
 
-nfs:
-  server: "10.0.1.10" # Will be replaced during deployment
-  path: "/srv/nfs/carlot"
-  storage: 1Gi
+resources: {}

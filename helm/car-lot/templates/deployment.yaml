@@ -1,52 +1,41 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "car-lot.fullname" . }}
+  name: {{ include "carlot-app.fullname" . }}
   labels:
-    {{- include "car-lot.labels" . | nindent 4 }}
+    app: {{ include "carlot-app.name" . }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "car-lot.selectorLabels" . | nindent 6 }}
+      app: {{ include "carlot-app.name" . }}
   template:
     metadata:
       labels:
-        {{- include "car-lot.selectorLabels" . | nindent 8 }}
+        app: {{ include "carlot-app.name" . }}
     spec:
       containers:
-        - name: {{ .Chart.Name }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        - name: carlot-app
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+
           ports:
-            - name: http
-              containerPort: {{ .Values.service.targetPort }}
-              protocol: TCP
-          env:
-            - name: DATA_FILE
-              value: "/app/data/inventory.json"
+            - containerPort: {{ .Values.service.port }}
+
+          # HEALTH CHECKS (Critical for ALB)
           readinessProbe:
             httpGet:
-              path: /health
-              port: {{ .Values.service.targetPort }}
+              path: /
+              port: {{ .Values.service.port }}
             initialDelaySeconds: 5
             periodSeconds: 5
-            timeoutSeconds: 3
-            successThreshold: 1
-            failureThreshold: 3
+
           livenessProbe:
             httpGet:
-              path: /health
-              port: {{ .Values.service.targetPort }}
-            initialDelaySeconds: 15
+              path: /
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: 10
             periodSeconds: 10
-            timeoutSeconds: 3
-            successThreshold: 1
-            failureThreshold: 3
-          volumeMounts:
-            - name: data
-              mountPath: /app/data
-      volumes:
-        - name: data
-          persistentVolumeClaim:
-            claimName: {{ include "car-lot.fullname" . }}-pvc
+
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

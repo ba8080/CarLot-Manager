@@ -1,15 +1,14 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "car-lot.fullname" . }}
+  name: {{ include "carlot-app.fullname" . }}
   labels:
-    {{- include "car-lot.labels" . | nindent 4 }}
+    app: {{ include "carlot-app.name" . }}
 spec:
   type: {{ .Values.service.type }}
+  selector:
+    app: {{ include "carlot-app.name" . }}
   ports:
     - port: {{ .Values.service.port }}
-      targetPort: {{ .Values.service.targetPort }}
+      targetPort: {{ .Values.service.port }}
       protocol: TCP
-      nodePort: {{ .Values.service.nodePort }}
-  selector:
-    {{- include "car-lot.selectorLabels" . | nindent 4 }}
