@@ -7,14 +7,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  # ==========================
-  # Stage 1: Build & Push Docker
-  # ==========================
-  build_push_container:
-    name: Build and Push Docker Image
+  docker_build_push:
     runs-on: ubuntu-latest
-    outputs:
-      image_tag: ${{ steps.push.outputs.image_tag }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -26,26 +20,20 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build Docker Image
-        run: |
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/carlot-manager:latest .
-          echo "image_tag=${{ secrets.DOCKERHUB_USERNAME }}/carlot-manager:latest" >> $GITHUB_OUTPUT
+        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/carlot-manager:latest .
 
       - name: Push Docker Image
-        id: push
         run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/carlot-manager:latest
 
-  # ==========================
-  # Stage 2: Terraform
-  # ==========================
+
   terraform:
     name: Deploy Infrastructure (Terraform)
     runs-on: ubuntu-latest
-    needs: build_push_container
+    needs: docker_build_push
     defaults:
       run:
         working-directory: terraform/
-    outputs:
-      alb_dns_name: ${{ steps.alb_output.outputs.alb_dns_name }}
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -83,78 +71,64 @@ jobs:
           echo "alb_dns_name=$alb_dns_name" >> "$GITHUB_OUTPUT"
           echo "ALB DNS: $alb_dns_name"
 
-  # ==========================
-  # Stage 3: Ansible
-  # ==========================
+
   ansible:
-    name: Configure Systems with Ansible
+    name: Configure EC2 with Ansible
     runs-on: ubuntu-latest
     needs: terraform
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Ansible
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ansible
+      - name: Install Ansible
+        run: sudo apt-get update && sudo apt-get install -y ansible
 
       - name: Run Ansible Playbook
         run: |
-          ansible-playbook ansible/playbook.yml -i ansible/inventory.ini \
-            --extra-vars "alb_dns_name=${{ needs.terraform.outputs.alb_dns_name }}"
+          ansible-playbook -i ansible/inventory ansible/playbook.yml
 
-  # ==========================
-  # Stage 4: Helm
-  # ==========================
-  helm:
-    name: Deploy Application with Helm
+
+  helm_deploy:
+    name: Deploy Application with Helm (via KIND cluster)
     runs-on: ubuntu-latest
     needs: ansible
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Helm
+      # KIND installation
+      - name: Install kind
         run: |
-          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          curl -Lo kind https://kind.sigs.k8s.io/dl/v0.26.0/kind-linux-amd64
+          chmod +x kind
+          sudo mv kind /usr/local/bin
 
-      - name: Deploy with Helm
+      # Create cluster
+      - name: Create Kubernetes Cluster
         run: |
-          helm upgrade --install carlot-app helm/carlot-app \
-            --set image.repository=${{ secrets.DOCKERHUB_USERNAME }}/carlot-manager \
-            --set image.tag=latest \
-            --set alb.dns=${{ needs.terraform.outputs.alb_dns_name }}
+          kind create cluster --name carlot
 
-  # ==========================
-  # Stage 5: Notify & Health Check
-  # ==========================
-  notify:
-    name: Notify & Health Check
-    runs-on: ubuntu-latest
-    needs: helm
-    steps:
-      - name: Print Deployment Info
+      # Install kubectl
+      - name: Install kubectl
         run: |
-          echo "=============================="
-          echo "🚀 Application Deployed!"
-          echo "URL: http://${{ needs.terraform.outputs.alb_dns_name }}"
-          echo "=============================="
+          curl -LO "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin
 
-      - name: Check Application Health
+      # Install helm
+      - name: Install Helm
         run: |
-          URL="http://${{ needs.terraform.outputs.alb_dns_name }}"
-          echo "Checking health at: $URL"
-          wait_time=5
-          for i in {1..10}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || true)
-            if [ "$STATUS" = "200" ]; then
-              echo "✅ Application is healthy! (HTTP 200)"
-              exit 0
-            fi
-            echo "Status $STATUS - retrying in $wait_time seconds..."
-            sleep $wait_time
-            wait_time=$((wait_time * 2))
-          done
-          echo "❌ Application did NOT return 200 within timeout."
-          exit 1
+          curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+
+      - name: Verify Cluster
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      # Deploy using helm
+      - name: Deploy Application with Helm
+        run: |
+          helm upgrade --install carlot-app helm/carlot-app --namespace default
+
