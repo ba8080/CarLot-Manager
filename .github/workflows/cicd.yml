@@ -24,13 +24,17 @@ jobs:
           username: ${{ env.DOCKER_USERNAME }}
           password: ${{ env.DOCKER_PASSWORD }}
 
+      - name: Verify Docker Login
+        run: |
+          docker info | grep Username || (echo "Docker login failed!" && exit 1)
+
       - name: Build Docker image
         run: |
           IMAGE_NAME="${{ env.DOCKER_USERNAME }}/carlot-app:latest"
           docker build -t $IMAGE_NAME ./docker
           docker push $IMAGE_NAME
 
-  # 2️⃣ Terraform - Provision Infrastructure and EKS Cluster
+  # 2️⃣ Terraform - Provision Infrastructure (VMs only)
   terraform:
     name: Terraform Provisioning
     runs-on: ubuntu-latest
@@ -58,21 +62,9 @@ jobs:
           terraform init
           terraform apply -auto-approve
 
-      # Export kubeconfig after cluster creation
-      - name: Export kubeconfig
-        run: |
-          aws eks describe-cluster --name carlot-cluster --region us-east-1
-          aws eks update-kubeconfig --name carlot-cluster --region us-east-1
-          mkdir -p $GITHUB_WORKSPACE/kube
-          cp ~/.kube/config $GITHUB_WORKSPACE/kube/config
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
-
-  # 3️⃣ Ansible - Configure Systems
+  # 3️⃣ Ansible - Setup Kubernetes Cluster
   ansible:
-    name: Ansible Configuration
+    name: Ansible Cluster Setup
     runs-on: ubuntu-latest
     needs: terraform
     steps:
@@ -82,13 +74,38 @@ jobs:
       - name: Install Ansible
         run: |
           sudo apt-get update
-          sudo apt-get install -y ansible
+          sudo apt-get install -y ansible sshpass python3-pip
+
+      - name: Generate Inventory (Python script)
+        run: |
+          python3 ansible/generate_inventory.py <MASTER_IP> <WORKER_IPS>
 
       - name: Run Ansible Playbook
         run: |
-          ansible-playbook -i ansible/inventory ansible/playbook.yml
+          ansible-playbook -i ansible/inventory.ini ansible/playbook.yml
 
-  # 4️⃣ Helm Deployment
+      - name: Copy kubeconfig for CI
+        run: |
+          cp /home/ubuntu/.kube/config $GITHUB_WORKSPACE/kubeconfig
+          chmod 644 $GITHUB_WORKSPACE/kubeconfig
+
+      - name: Wait for Kubernetes cluster to be ready
+        run: |
+          export KUBECONFIG=$GITHUB_WORKSPACE/kubeconfig
+          echo "Waiting for all nodes to be Ready..."
+          retries=0
+          until kubectl get nodes --no-headers | awk '{print $2}' | grep -vq "NotReady"; do
+            if [ $retries -ge 20 ]; then
+              echo "Cluster nodes not ready after 200 seconds"
+              exit 1
+            fi
+            echo "Cluster not ready yet, sleeping 10 seconds..."
+            sleep 10
+            retries=$((retries+1))
+          done
+          echo "All nodes are Ready!"
+
+  # 4️⃣ Helm Deployment + Load Balancer Info
   helm:
     name: Helm Deployment
     runs-on: ubuntu-latest
@@ -107,18 +124,11 @@ jobs:
         with:
           version: latest
 
-      # Configure kubeconfig
       - name: Configure kubeconfig
         run: |
-          cp $GITHUB_WORKSPACE/kube/config ./kubeconfig
-          export KUBECONFIG=$(pwd)/kubeconfig
-
-      # Test cluster connectivity
-      - name: Test cluster connectivity
-        run: |
+          export KUBECONFIG=$GITHUB_WORKSPACE/kubeconfig
           kubectl get nodes
 
-      # Helm upgrade/install
       - name: Helm upgrade/install
         run: |
           RELEASE_NAME="carlot-app"
@@ -126,17 +136,27 @@ jobs:
           NAMESPACE="default"
           helm upgrade --install $RELEASE_NAME $CHART_PATH --namespace $NAMESPACE --create-namespace
 
-      # Helm release status
       - name: Helm release status
         run: |
           helm status carlot-app --namespace default
 
-      # Load Balancer info
       - name: Get Load Balancer info
+        id: lb_info
         run: |
+          export KUBECONFIG=$GITHUB_WORKSPACE/kubeconfig
           LB_SERVICE=$(kubectl get svc -n default -l app=carlot-app -o jsonpath="{.items[0].status.loadBalancer.ingress[0].ip}")
           if [ -z "$LB_SERVICE" ]; then
             LB_SERVICE=$(kubectl get svc -n default -l app=carlot-app -o jsonpath="{.items[0].status.loadBalancer.ingress[0].hostname}")
           fi
-          echo "Load Balancer is accessible at: $LB_SERVICE"
+          echo "Load Balancer: $LB_SERVICE"
+          echo "lb_url=http://$LB_SERVICE" >> $GITHUB_OUTPUT
 
+      - name: Display clickable link
+        run: |
+          echo "Access your CarLot app here: ${{ steps.lb_info.outputs.lb_url }}"
+
+      - name: Resolve Public IP of ALB
+        run: |
+          LB_HOST=$(echo "${{ steps.lb_info.outputs.lb_url }}" | sed 's|http://||')
+          PUBLIC_IP=$(dig +short $LB_HOST)
+          echo "Public IP of the Load Balancer: $PUBLIC_IP"
