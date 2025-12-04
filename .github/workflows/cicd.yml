@@ -34,7 +34,7 @@ jobs:
           docker build -t $IMAGE_NAME ./docker
           docker push $IMAGE_NAME
 
-  # 2️⃣ Terraform - Provision Infrastructure (VMs only)
+  # 2️⃣ Terraform - Provision Infrastructure
   terraform:
     name: Terraform Provisioning
     runs-on: ubuntu-latest
@@ -78,7 +78,11 @@ jobs:
 
       - name: Generate Inventory (Python script)
         run: |
-          python3 ansible/generate_inventory.py <MASTER_IP> <WORKER_IPS>
+          cd terraform
+          MASTER_IP=$(terraform output -raw master_ip)
+          WORKER_IPS=$(terraform output -raw worker_ips)
+          cd ..
+          python3 ansible/generate_inventory.py $MASTER_IP $WORKER_IPS
 
       - name: Run Ansible Playbook
         run: |
