@@ -158,7 +158,6 @@ jobs:
           if [ -z "$LB_SERVICE" ]; then
             LB_SERVICE=$(kubectl get svc -n default -l app=carlot-app -o jsonpath="{.items[0].status.loadBalancer.ingress[0].hostname}")
           fi
-          echo "Load Balancer: $LB_SERVICE"
           echo "lb_url=http://$LB_SERVICE" >> $GITHUB_OUTPUT
 
       - name: Display clickable link
