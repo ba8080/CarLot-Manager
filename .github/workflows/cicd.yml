@@ -56,6 +56,9 @@ jobs:
         with:
           terraform_version: 1.6.0
 
+      - name: Check Terraform version
+        run: terraform version
+
       - name: Terraform Init & Apply
         run: |
           cd terraform
@@ -74,14 +77,19 @@ jobs:
       - name: Install Ansible
         run: |
           sudo apt-get update
-          sudo apt-get install -y ansible sshpass python3-pip
+          sudo apt-get install -y ansible sshpass python3-pip jq
 
-      - name: Generate Inventory (Python script)
+      - name: Generate Inventory (Python script from Terraform outputs)
         run: |
           cd terraform
           MASTER_IP=$(terraform output -raw master_ip)
-          WORKER_IPS=$(terraform output -raw worker_ips)
+          # Convert Terraform array output to space-separated string
+          WORKER_IPS=$(terraform output -json worker_ips | jq -r '.[]')
           cd ..
+          
+          echo "Master IP: $MASTER_IP"
+          echo "Worker IPs: $WORKER_IPS"
+
           python3 ansible/generate_inventory.py $MASTER_IP $WORKER_IPS
 
       - name: Run Ansible Playbook
@@ -141,8 +149,7 @@ jobs:
           helm upgrade --install $RELEASE_NAME $CHART_PATH --namespace $NAMESPACE --create-namespace
 
       - name: Helm release status
-        run: |
-          helm status carlot-app --namespace default
+        run: helm status carlot-app --namespace default
 
       - name: Get Load Balancer info
         id: lb_info
@@ -156,8 +163,7 @@ jobs:
           echo "lb_url=http://$LB_SERVICE" >> $GITHUB_OUTPUT
 
       - name: Display clickable link
-        run: |
-          echo "Access your CarLot app here: ${{ steps.lb_info.outputs.lb_url }}"
+        run: echo "Access your CarLot app here: ${{ steps.lb_info.outputs.lb_url }}"
 
       - name: Resolve Public IP of ALB
         run: |
