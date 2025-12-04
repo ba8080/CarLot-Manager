@@ -1,134 +1,93 @@
-name: Full CI/CD Pipeline
+name: Full CI/CD Pipeline for CarLot-Manager
 
 on:
   push:
     branches:
       - main
-  workflow_dispatch:
 
 jobs:
-  docker_build_push:
+  deploy:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build Docker Image
-        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/carlot-manager:latest .
-
-      - name: Push Docker Image
-        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/carlot-manager:latest
-
-
-  terraform:
-    name: Deploy Infrastructure (Terraform)
-    runs-on: ubuntu-latest
-    needs: docker_build_push
-    defaults:
-      run:
-        working-directory: terraform/
+    env:
+      DOCKER_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKER_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}
+      KUBECONFIG_CONTENT: ${{ secrets.KUBECONFIG_CONTENT }}
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      # 1️⃣ Checkout repository
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-      - name: Setup AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      # 2️⃣ Build & push Docker image
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: us-east-1
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
+      - name: Build Docker image
+        run: |
+          IMAGE_NAME="${{ secrets.DOCKER_USERNAME }}/carlot-app:latest"
+          docker build -t $IMAGE_NAME ./docker
+          docker push $IMAGE_NAME
+
+      # 3️⃣ Install Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: 1.5.7
+          terraform_version: 1.6.0
 
-      - name: Terraform Init
-        run: terraform init -input=false -no-color
-
-      - name: Terraform Plan
-        run: terraform plan -out=tfplan -input=false -no-color
-
-      - name: Terraform Apply
-        run: terraform apply -input=false -auto-approve -no-color tfplan
-
-      - name: Output ALB DNS
-        id: alb_output
+      - name: Terraform Init & Apply
         run: |
-          alb_dns_name=$(terraform output -raw alb_dns_name 2>/dev/null | tr -d '\r\n')
-          if [ -z "$alb_dns_name" ]; then
-            echo "ERROR: alb_dns_name output is empty or ALB not created"
-            exit 1
-          fi
-          echo "alb_dns_name=$alb_dns_name" >> "$GITHUB_OUTPUT"
-          echo "ALB DNS: $alb_dns_name"
+          cd terraform
+          terraform init
+          terraform apply -auto-approve
 
-
-  ansible:
-    name: Configure EC2 with Ansible
-    runs-on: ubuntu-latest
-    needs: terraform
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
+      # 4️⃣ Install Ansible
       - name: Install Ansible
-        run: sudo apt-get update && sudo apt-get install -y ansible
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible
 
       - name: Run Ansible Playbook
         run: |
           ansible-playbook -i ansible/inventory ansible/playbook.yml
 
+      # 5️⃣ Setup Helm & kubectl
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: v3.12.0
 
-  helm_deploy:
-    name: Deploy Application with Helm (via KIND cluster)
-    runs-on: ubuntu-latest
-    needs: ansible
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: '1.30.0'
 
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      # KIND installation
-      - name: Install kind
+      # 6️⃣ Configure kubeconfig
+      - name: Configure kubeconfig
         run: |
-          curl -Lo kind https://kind.sigs.k8s.io/dl/v0.26.0/kind-linux-amd64
-          chmod +x kind
-          sudo mv kind /usr/local/bin
+          echo "${{ secrets.KUBECONFIG_CONTENT }}" > kubeconfig
+          export KUBECONFIG=$(pwd)/kubeconfig
 
-      # Create cluster
-      - name: Create Kubernetes Cluster
+      # 7️⃣ Deploy Helm chart
+      - name: Helm upgrade/install
         run: |
-          kind create cluster --name carlot
+          RELEASE_NAME="carlot-app"
+          CHART_PATH="./helm/car-lot"
+          NAMESPACE="default"
+          helm upgrade --install $RELEASE_NAME $CHART_PATH --namespace $NAMESPACE --create-namespace
 
-      # Install kubectl
-      - name: Install kubectl
+      # 8️⃣ Show Helm release status
+      - name: Helm release status
         run: |
-          curl -LO "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin
+          helm status carlot-app --namespace default
 
-      # Install helm
-      - name: Install Helm
+      # 9️⃣ Get Load Balancer IP / URL
+      - name: Get Load Balancer info
         run: |
-          curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
-
-      - name: Verify Cluster
-        run: |
-          kubectl cluster-info
-          kubectl get nodes
-
-      # Deploy using helm
-      - name: Deploy Application with Helm
-        run: |
-          helm upgrade --install carlot-app helm/carlot-app --namespace default
-
+          LB_SERVICE=$(kubectl get svc -n default -l app=carlot-app -o jsonpath="{.items[0].status.loadBalancer.ingress[0].ip}")
+          if [ -z "$LB_SERVICE" ]; then
+            LB_SERVICE=$(kubectl get svc -n default -l app=carlot-app -o jsonpath="{.items[0].status.loadBalancer.ingress[0].hostname}")
+          fi
+          echo "Load Balancer is accessible at: $LB_SERVICE"
