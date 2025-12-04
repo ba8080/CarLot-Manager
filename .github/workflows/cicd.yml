@@ -24,10 +24,6 @@ jobs:
           username: ${{ env.DOCKER_USERNAME }}
           password: ${{ env.DOCKER_PASSWORD }}
 
-      - name: Verify Docker Login
-        run: |
-          docker info | grep Username || (echo "Docker login failed!" && exit 1)
-
       - name: Build Docker image
         run: |
           IMAGE_NAME="${{ env.DOCKER_USERNAME }}/carlot-app:latest"
@@ -56,9 +52,6 @@ jobs:
         with:
           terraform_version: 1.6.0
 
-      - name: Check Terraform version
-        run: terraform version
-
       - name: Terraform Init & Apply
         run: |
           cd terraform
@@ -85,15 +78,10 @@ jobs:
           MASTER_IP=$(terraform output -raw master_ip)
           WORKER_IPS=$(terraform output -json worker_ips | jq -r '.[]')
           cd ..
-          
-          echo "Master IP: $MASTER_IP"
-          echo "Worker IPs: $WORKER_IPS"
-
           python3 ansible/generate_inventory.py $MASTER_IP $WORKER_IPS
 
       - name: Run Ansible Playbook
-        run: |
-          ansible-playbook -i ansible/inventory.ini ansible/playbook.yml
+        run: ansible-playbook -i ansible/inventory.ini ansible/playbook.yml
 
       - name: Copy kubeconfig for CI
         run: |
@@ -103,18 +91,14 @@ jobs:
       - name: Wait for Kubernetes cluster to be ready
         run: |
           export KUBECONFIG=$GITHUB_WORKSPACE/kubeconfig
-          echo "Waiting for all nodes to be Ready..."
           retries=0
           until kubectl get nodes --no-headers | awk '{print $2}' | grep -vq "NotReady"; do
             if [ $retries -ge 20 ]; then
-              echo "Cluster nodes not ready after 200 seconds"
               exit 1
             fi
-            echo "Cluster not ready yet, sleeping 10 seconds..."
             sleep 10
             retries=$((retries+1))
           done
-          echo "All nodes are Ready!"
 
   # 4️⃣ Helm Deployment + Load Balancer Info
   helm:
@@ -161,12 +145,12 @@ jobs:
           echo "lb_url=http://$LB_SERVICE" >> $GITHUB_OUTPUT
 
       - name: Display clickable link
-        run: echo "Access your CarLot app here: ${{ steps.lb_info.outputs.lb_url }}"
+        env:
+          LB_URL: ${{ steps.lb_info.outputs.lb_url }}
+        run: echo "Access your CarLot app here: $LB_URL"
 
       - name: Resolve Public IP of ALB
         run: |
           LB_HOST=$(echo "${{ steps.lb_info.outputs.lb_url }}" | sed 's|http://||')
           PUBLIC_IP=$(dig +short $LB_HOST)
           echo "Public IP of the Load Balancer: $PUBLIC_IP"
-
-
