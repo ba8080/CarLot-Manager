@@ -25,10 +25,9 @@ spec:
           ports:
             - containerPort: {{ .Values.service.port }}
 
-          # HEALTH CHECKS (Critical for ALB)
+          # HEALTH CHECKS - Using TCP for Streamlit
           readinessProbe:
-            httpGet:
-              path: /
+            tcpSocket:
               port: {{ .Values.service.port }}
             initialDelaySeconds: 10
             periodSeconds: 10
@@ -36,8 +35,7 @@ spec:
             failureThreshold: 3
 
           livenessProbe:
-            httpGet:
-              path: /
+            tcpSocket:
               port: {{ .Values.service.port }}
             initialDelaySeconds: 15
             periodSeconds: 20

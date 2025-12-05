@@ -68,7 +68,7 @@
       delay: 5
 
     - name: Pull Docker image
-      shell: docker pull azexkush/car-lot-manager:latest
+      shell: docker pull azexkush/carlot-app:latest
       register: docker_pull
       retries: 3
       delay: 10

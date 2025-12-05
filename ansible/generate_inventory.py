@@ -41,10 +41,15 @@ def generate_inventory(ips):
     inventory_content += "[all:vars]\n"
     inventory_content += "ansible_python_interpreter=/usr/bin/python3\n"
     
-    with open("inventory.ini", "w") as f:
+    # Write to ansible/inventory.ini (relative to where script is run from)
+    import os
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    inventory_path = os.path.join(script_dir, "inventory.ini")
+    
+    with open(inventory_path, "w") as f:
         f.write(inventory_content)
     
-    print("inventory.ini generated successfully.")
+    print(f"inventory.ini generated successfully at: {inventory_path}")
     print(f"Master: {master_ip}")
     if worker_ips:
         print(f"Workers: {', '.join(worker_ips)}")
