@@ -11,7 +11,7 @@ INITIAL_DATA = [
     {"id": 1, "make": "Toyota", "model": "Camry", "year": 2020, "price": 24090, "status": "available"},
     {"id": 2, "make": "Honda", "model": "Civic", "year": 2021, "price": 22080, "status": "available"},
     {"id": 3, "make": "Ford", "model": "Mustang", "year": 2022, "price": 35000, "status": "available"},
-    {"id": 4, "make": "Tesla", "model": "Model 3", "year": 2023, "price": 42000, "status": "available"},
+    {"id": 4, "make": "Tesla", "model": "Model 3", "year": 2023, "price": 42020, "status": "available"},
     {"id": 5, "make": "BMW", "model": "X5", "year": 2022, "price": 58000, "status": "available"}
 ]
 
