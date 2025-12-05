@@ -1,7 +1,6 @@
 # DevOps Final Project - Car Lot Manager
 
-**Student Name:** [YOUR NAME]
-**Student ID:** [YOUR ID]
+**Student Name:** Ori Bramy + Liel Levi 
 
 ## Project Description
 This project is a fully automated DevOps solution for deploying a Python web application (Car Lot Manager) to a Kubernetes cluster on AWS. It demonstrates Infrastructure as Code (Terraform), Configuration Management (Ansible), Container Orchestration (Kubernetes/Helm), and CI/CD (GitHub Actions).
