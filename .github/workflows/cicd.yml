@@ -62,14 +62,28 @@ jobs:
           cd terraform
           terraform init
           terraform apply -auto-approve
+          
+      - name: Save Terraform State
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-state
+          path: terraform/
+          retention-days: 1
 
       - name: Extract Terraform Outputs
         id: tf_output
         run: |
           cd terraform
-          MASTER_IP=$(terraform output -raw instance_ips | jq -r '.[0]')
-          WORKER_IPS=$(terraform output -json instance_ips | jq -r '.[1:] | @json')
+          # Get master IP (first element of instance_ips array)
+          MASTER_IP=$(terraform output -json instance_ips | jq -r '.[0]')
+          # Get worker IPs (remaining elements)
+          WORKER_IPS=$(terraform output -json instance_ips | jq -r '.[1:] | join(" ")')
+          # Get SSH key
           SSH_KEY=$(terraform output -raw ssh_private_key)
+          
+          echo "Master IP: $MASTER_IP"
+          echo "Worker IPs: $WORKER_IPS"
+          
           echo "master_ip=$MASTER_IP" >> $GITHUB_OUTPUT
           echo "worker_ips=$WORKER_IPS" >> $GITHUB_OUTPUT
           echo "ssh_key<<EOF" >> $GITHUB_OUTPUT
@@ -115,9 +129,17 @@ jobs:
       - name: Generate Inventory
         run: |
           MASTER_IP="${{ needs.terraform.outputs.master_ip }}"
-          WORKER_IPS='${{ needs.terraform.outputs.worker_ips }}'
-          IPS=$(echo $WORKER_IPS | jq -r '.[]')
-          python3 ansible/generate_inventory.py $MASTER_IP $IPS
+          WORKER_IPS="${{ needs.terraform.outputs.worker_ips }}"
+          
+          echo "Master IP: $MASTER_IP"
+          echo "Worker IPs: $WORKER_IPS"
+          
+          # Generate inventory with master and worker IPs
+          python3 ansible/generate_inventory.py $MASTER_IP $WORKER_IPS
+          
+          # Display generated inventory
+          echo "Generated inventory:"
+          cat ansible/inventory.ini
 
       - name: Wait for SSH to be ready
         run: |
@@ -174,6 +196,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Download Terraform State
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-state
+          path: terraform/
+
       - name: Download kubeconfig
         uses: actions/download-artifact@v4
         with:
@@ -215,11 +243,19 @@ jobs:
           export KUBECONFIG=$GITHUB_WORKSPACE/kubeconfig
           helm status carlot-app --namespace default
 
+      - name: Setup Terraform for Output
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.6.0
+          terraform_wrapper: false
+
       - name: Get ALB DNS from Terraform
         id: alb_info
         run: |
           cd terraform
+          terraform init -backend=false
           ALB_DNS=$(terraform output -raw alb_dns_name)
+          echo "ALB DNS: $ALB_DNS"
           echo "alb_url=http://$ALB_DNS" >> $GITHUB_OUTPUT
 
       - name: Display Application URL
