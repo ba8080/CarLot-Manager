@@ -1,18 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "carlot-app.fullname" . }}
+  name: {{ include "car-lot.fullname" . }}
   labels:
-    app: {{ include "carlot-app.name" . }}
+    app: carlot-app
+    {{- include "car-lot.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      app: {{ include "carlot-app.name" . }}
+      app: carlot-app
+      {{- include "car-lot.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        app: {{ include "carlot-app.name" . }}
+        app: carlot-app
+        {{- include "car-lot.selectorLabels" . | nindent 8 }}
     spec:
       containers:
         - name: carlot-app
@@ -27,15 +30,21 @@ spec:
             httpGet:
               path: /
               port: {{ .Values.service.port }}
-            initialDelaySeconds: 5
-            periodSeconds: 5
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
 
           livenessProbe:
             httpGet:
               path: /
               port: {{ .Values.service.port }}
-            initialDelaySeconds: 10
-            periodSeconds: 10
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
 
+          {{- if .Values.resources }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          {{- end }}

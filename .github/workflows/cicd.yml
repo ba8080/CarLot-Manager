@@ -35,6 +35,10 @@ jobs:
     name: Terraform Provisioning
     runs-on: ubuntu-latest
     needs: docker
+    outputs:
+      master_ip: ${{ steps.tf_output.outputs.master_ip }}
+      worker_ips: ${{ steps.tf_output.outputs.worker_ips }}
+      ssh_key: ${{ steps.tf_output.outputs.ssh_key }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -51,12 +55,39 @@ jobs:
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.6.0
+          terraform_wrapper: false
 
       - name: Terraform Init & Apply
         run: |
           cd terraform
           terraform init
           terraform apply -auto-approve
+
+      - name: Extract Terraform Outputs
+        id: tf_output
+        run: |
+          cd terraform
+          MASTER_IP=$(terraform output -raw instance_ips | jq -r '.[0]')
+          WORKER_IPS=$(terraform output -json instance_ips | jq -r '.[1:] | @json')
+          SSH_KEY=$(terraform output -raw ssh_private_key)
+          echo "master_ip=$MASTER_IP" >> $GITHUB_OUTPUT
+          echo "worker_ips=$WORKER_IPS" >> $GITHUB_OUTPUT
+          echo "ssh_key<<EOF" >> $GITHUB_OUTPUT
+          echo "$SSH_KEY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Save SSH Key
+        run: |
+          mkdir -p /tmp
+          echo "${{ steps.tf_output.outputs.ssh_key }}" > /tmp/generated_key.pem
+          chmod 400 /tmp/generated_key.pem
+
+      - name: Upload SSH Key as Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ssh-key
+          path: /tmp/generated_key.pem
+          retention-days: 1
 
   # 3️⃣ Ansible - Setup Kubernetes Cluster
   ansible:
@@ -67,47 +98,87 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      - name: Download SSH Key
+        uses: actions/download-artifact@v3
+        with:
+          name: ssh-key
+          path: /tmp
+
+      - name: Set SSH Key Permissions
+        run: chmod 400 /tmp/generated_key.pem
+
       - name: Install Ansible
         run: |
           sudo apt-get update
           sudo apt-get install -y ansible sshpass python3-pip jq
 
-      - name: Generate Inventory (Python script from Terraform outputs)
+      - name: Generate Inventory
         run: |
-          cd terraform
-          MASTER_IP=$(terraform output -raw master_ip)
-          WORKER_IPS=$(terraform output -json worker_ips | jq -r '.[]')
-          cd ..
-          python3 ansible/generate_inventory.py $MASTER_IP $WORKER_IPS
+          MASTER_IP="${{ needs.terraform.outputs.master_ip }}"
+          WORKER_IPS='${{ needs.terraform.outputs.worker_ips }}'
+          IPS=$(echo $WORKER_IPS | jq -r '.[]')
+          python3 ansible/generate_inventory.py $MASTER_IP $IPS
+
+      - name: Wait for SSH to be ready
+        run: |
+          MASTER_IP="${{ needs.terraform.outputs.master_ip }}"
+          for i in {1..30}; do
+            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i /tmp/generated_key.pem ubuntu@$MASTER_IP "echo SSH Ready" 2>/dev/null; then
+              echo "SSH is ready"
+              break
+            fi
+            echo "Waiting for SSH... ($i/30)"
+            sleep 10
+          done
 
       - name: Run Ansible Playbook
         run: ansible-playbook -i ansible/inventory.ini ansible/playbook.yml
 
-      - name: Copy kubeconfig for CI
+      - name: Fetch kubeconfig from master
         run: |
-          cp /home/ubuntu/.kube/config $GITHUB_WORKSPACE/kubeconfig
+          MASTER_IP="${{ needs.terraform.outputs.master_ip }}"
+          scp -o StrictHostKeyChecking=no -i /tmp/generated_key.pem ubuntu@$MASTER_IP:~/.kube/config $GITHUB_WORKSPACE/kubeconfig
           chmod 644 $GITHUB_WORKSPACE/kubeconfig
+
+      - name: Upload kubeconfig as Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: kubeconfig
+          path: ${{ github.workspace }}/kubeconfig
+          retention-days: 1
 
       - name: Wait for Kubernetes cluster to be ready
         run: |
           export KUBECONFIG=$GITHUB_WORKSPACE/kubeconfig
+          kubectl config set-cluster kubernetes --server=https://${{ needs.terraform.outputs.master_ip }}:6443 --insecure-skip-tls-verify=true
           retries=0
-          until kubectl get nodes --no-headers | awk '{print $2}' | grep -vq "NotReady"; do
+          until kubectl get nodes --no-headers 2>/dev/null | awk '{print $2}' | grep -vq "NotReady"; do
             if [ $retries -ge 20 ]; then
+              echo "Cluster not ready after 20 retries"
+              kubectl get nodes || true
               exit 1
             fi
-            sleep 10
+            echo "Waiting for cluster to be ready... ($retries/20)"
+            sleep 15
             retries=$((retries+1))
           done
+          echo "Cluster is ready!"
+          kubectl get nodes
 
   # 4️⃣ Helm Deployment + Load Balancer Info
   helm:
     name: Helm Deployment
     runs-on: ubuntu-latest
-    needs: ansible
+    needs: [terraform, ansible]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+
+      - name: Download kubeconfig
+        uses: actions/download-artifact@v3
+        with:
+          name: kubeconfig
+          path: .
 
       - name: Setup Helm
         uses: azure/setup-helm@v3
@@ -122,35 +193,43 @@ jobs:
       - name: Configure kubeconfig
         run: |
           export KUBECONFIG=$GITHUB_WORKSPACE/kubeconfig
+          kubectl config set-cluster kubernetes --server=https://${{ needs.terraform.outputs.master_ip }}:6443 --insecure-skip-tls-verify=true
           kubectl get nodes
 
       - name: Helm upgrade/install
         run: |
+          export KUBECONFIG=$GITHUB_WORKSPACE/kubeconfig
           RELEASE_NAME="carlot-app"
           CHART_PATH="./helm/car-lot"
           NAMESPACE="default"
-          helm upgrade --install $RELEASE_NAME $CHART_PATH --namespace $NAMESPACE --create-namespace
+          helm upgrade --install $RELEASE_NAME $CHART_PATH --namespace $NAMESPACE --create-namespace --wait --timeout 5m
 
-      - name: Helm release status
-        run: helm status carlot-app --namespace default
-
-      - name: Get Load Balancer info
-        id: lb_info
+      - name: Verify Deployment
         run: |
           export KUBECONFIG=$GITHUB_WORKSPACE/kubeconfig
-          LB_SERVICE=$(kubectl get svc -n default -l app=carlot-app -o jsonpath="{.items[0].status.loadBalancer.ingress[0].ip}")
-          if [ -z "$LB_SERVICE" ]; then
-            LB_SERVICE=$(kubectl get svc -n default -l app=carlot-app -o jsonpath="{.items[0].status.loadBalancer.ingress[0].hostname}")
-          fi
-          echo "lb_url=http://$LB_SERVICE" >> $GITHUB_OUTPUT
+          kubectl get pods -n default
+          kubectl get svc -n default
 
-      - name: Display clickable link
-        env:
-          LB_URL: ${{ steps.lb_info.outputs.lb_url }}
-        run: echo "Access your CarLot app here: $LB_URL"
-
-      - name: Resolve Public IP of ALB
+      - name: Helm release status
         run: |
-          LB_HOST=$(echo "${{ steps.lb_info.outputs.lb_url }}" | sed 's|http://||')
-          PUBLIC_IP=$(dig +short $LB_HOST)
-          echo "Public IP of the Load Balancer: $PUBLIC_IP"
+          export KUBECONFIG=$GITHUB_WORKSPACE/kubeconfig
+          helm status carlot-app --namespace default
+
+      - name: Get ALB DNS from Terraform
+        id: alb_info
+        run: |
+          cd terraform
+          ALB_DNS=$(terraform output -raw alb_dns_name)
+          echo "alb_url=http://$ALB_DNS" >> $GITHUB_OUTPUT
+
+      - name: Display Application URL
+        env:
+          ALB_URL: ${{ steps.alb_info.outputs.alb_url }}
+        run: |
+          echo "=========================================="
+          echo "🚀 Deployment Complete!"
+          echo "=========================================="
+          echo "Access your CarLot Manager at:"
+          echo "$ALB_URL"
+          echo "=========================================="
+          echo "Note: It may take 2-3 minutes for the ALB to become healthy"

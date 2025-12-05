@@ -1,12 +1,19 @@
-replicaCount: 1
+replicaCount: 2
 
 image:
-  repository: ba8080/carlot-app    
+  repository: azexkush/carlot-app
   tag: "latest"
   pullPolicy: Always
 
 service:
-  type: NodePort        
+  type: NodePort
   port: 8501
+  nodePort: 30080
 
-resources: {}
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
